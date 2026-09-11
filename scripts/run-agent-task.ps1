@@ -19,6 +19,72 @@ $codexExecutableKind = ''
 
 New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
 
+function ConvertTo-ProcessArgument {
+    param([AllowNull()][string]$Argument)
+    if ($null -eq $Argument -or $Argument.Length -eq 0) { return '""' }
+    if ($Argument -notmatch '[\s"]') { return $Argument }
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append([char]34)
+    $backslashCount = 0
+    foreach ($character in $Argument.ToCharArray()) {
+        if ($character -eq [char]92) {
+            $backslashCount++
+            continue
+        }
+        if ($character -eq [char]34) {
+            if ($backslashCount -gt 0) { [void]$builder.Append([char]92, (2 * $backslashCount + 1)) }
+            [void]$builder.Append([char]34)
+            $backslashCount = 0
+            continue
+        }
+        if ($backslashCount -gt 0) { [void]$builder.Append([char]92, $backslashCount) }
+        [void]$builder.Append($character)
+        $backslashCount = 0
+    }
+    if ($backslashCount -gt 0) { [void]$builder.Append([char]92, (2 * $backslashCount)) }
+    [void]$builder.Append([char]34)
+    return $builder.ToString()
+}
+
+function Invoke-Git {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $git.Source
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $argumentListProperty = $startInfo.PSObject.Properties['ArgumentList']
+    if ($null -ne $argumentListProperty) {
+        foreach ($argument in $Arguments) { [void]$startInfo.ArgumentList.Add([string]$argument) }
+    } else {
+        $startInfo.Arguments = (($Arguments | ForEach-Object { ConvertTo-ProcessArgument ([string]$_) }) -join ' ')
+    }
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) { throw 'Git process could not be started.' }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        $stdout = $stdoutTask.Result
+        $stderr = $stderrTask.Result
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = $stdout
+            StdErr = $stderr
+        }
+    } catch {
+        return [pscustomobject]@{
+            ExitCode = 1
+            StdOut = ''
+            StdErr = $_.Exception.ToString()
+        }
+    } finally {
+        $process.Dispose()
+    }
+}
+
 function Get-ProjectRelativePath([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
     $pathForResolution = if ([System.IO.Path]::IsPathRooted($Path)) { $Path } else { Join-Path $rootResolvedPath $Path }
@@ -53,9 +119,15 @@ function Write-RunnerSummary {
     )
     $changedFiles = @()
     if ($git) {
-        $changedFiles += @(& $git.Source -C $root diff --name-only 2>&1)
-        $changedFiles += @(& $git.Source -C $root ls-files --others --exclude-standard 2>&1)
-        $changedFiles = @($changedFiles | ForEach-Object { [string]$_ } | Where-Object { $_ } | ForEach-Object { Get-ProjectRelativePath $_ }) | Sort-Object -Unique
+        $diffResult = Invoke-Git -Arguments @('-C', $root, 'diff', '--name-only')
+        if ($diffResult.ExitCode -eq 0) {
+            $changedFiles += @($diffResult.StdOut -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { Get-ProjectRelativePath $_ })
+        }
+        $untrackedResult = Invoke-Git -Arguments @('-C', $root, 'ls-files', '--others', '--exclude-standard')
+        if ($untrackedResult.ExitCode -eq 0) {
+            $changedFiles += @($untrackedResult.StdOut -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { Get-ProjectRelativePath $_ })
+        }
+        $changedFiles = @($changedFiles) | Sort-Object -Unique
     }
     $logFiles = @('reports/agent-task/codex.jsonl', 'reports/agent-task/codex-final.md')
     foreach ($testRun in @($TestRuns)) {
@@ -182,31 +254,35 @@ $git = Get-Command git -ErrorAction SilentlyContinue
 if ($null -eq $git) {
     Write-RunnerSummary -Status 'blocked' -Details 'Git is required by the local task runner.' -Branch '' -BranchAfter '' -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
 }
-$repoRoot = (& $git.Source -C $root rev-parse --show-toplevel 2>&1 | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repoRoot)) {
-    Write-RunnerSummary -Status 'failed' -Details 'The current directory is not inside a Git repository.' -Branch '' -BranchAfter '' -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 1 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
+$repoRootResult = Invoke-Git -Arguments @('-C', $root, 'rev-parse', '--show-toplevel')
+$repoRoot = $repoRootResult.StdOut.Trim()
+if ($repoRootResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($repoRoot)) {
+    Write-RunnerSummary -Status 'failed' -Details ("Git repository detection failed: {0}" -f $repoRootResult.StdErr.Trim()) -Branch '' -BranchAfter '' -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 1 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
 }
 $repoRoot = [System.IO.Path]::GetFullPath($repoRoot)
 if ($repoRoot -ne $root) {
     Write-RunnerSummary -Status 'failed' -Details 'The runner must execute from the repository root.' -Branch '' -BranchAfter '' -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 1 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
 }
-$branch = (& $git.Source -C $root branch --show-current 2>&1 | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branch)) {
-    Write-RunnerSummary -Status 'failed' -Details 'Could not determine the current Git branch.' -Branch '' -BranchAfter '' -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 1 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
+$branchResult = Invoke-Git -Arguments @('-C', $root, 'branch', '--show-current')
+$branch = $branchResult.StdOut.Trim()
+if ($branchResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($branch)) {
+    Write-RunnerSummary -Status 'failed' -Details ("Git branch detection failed: {0}" -f $branchResult.StdErr.Trim()) -Branch '' -BranchAfter '' -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 1 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
 }
 if ($branch -eq 'main') {
     Write-RunnerSummary -Status 'blocked' -Details 'The task runner is disabled on main.' -Branch $branch -BranchAfter $branch -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
 }
-$workingTree = @(& $git.Source -C $root status --porcelain=v1 --untracked-files=all 2>&1)
-if ($LASTEXITCODE -ne 0) {
-    Write-RunnerSummary -Status 'failed' -Details 'Could not inspect the Git working tree.' -Branch $branch -BranchAfter $branch -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 1 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
+$workingTreeResult = Invoke-Git -Arguments @('-C', $root, 'status', '--porcelain=v1', '--untracked-files=all')
+if ($workingTreeResult.ExitCode -ne 0) {
+    Write-RunnerSummary -Status 'failed' -Details ("Git working tree inspection failed: {0}" -f $workingTreeResult.StdErr.Trim()) -Branch $branch -BranchAfter $branch -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 1 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
 }
+$workingTree = @($workingTreeResult.StdOut -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 if ($workingTree.Count -gt 0) {
     Write-RunnerSummary -Status 'blocked' -Details 'The working tree is not clean. Commit or stash existing changes before running a task.' -Branch $branch -BranchAfter $branch -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
 }
-$headBefore = (& $git.Source -C $root rev-parse --verify HEAD 2>&1 | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headBefore)) {
-    Write-RunnerSummary -Status 'failed' -Details 'Could not record the current Git HEAD before starting Codex.' -Branch $branch -BranchAfter $branch -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 1 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
+$headBeforeResult = Invoke-Git -Arguments @('-C', $root, 'rev-parse', '--verify', 'HEAD')
+$headBefore = $headBeforeResult.StdOut.Trim()
+if ($headBeforeResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($headBefore)) {
+    Write-RunnerSummary -Status 'failed' -Details ("Could not record the current Git HEAD before starting Codex: {0}" -f $headBeforeResult.StdErr.Trim()) -Branch $branch -BranchAfter $branch -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 1 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
 }
 
 $codexCmdCandidate = @(Get-Command codex.cmd -All -ErrorAction SilentlyContinue | Where-Object { $_.CommandType -eq 'Application' }) | Select-Object -First 1
@@ -292,10 +368,12 @@ try {
 $codexText = if (Test-Path -LiteralPath $codexLogPath -PathType Leaf) { Get-Content -Raw -LiteralPath $codexLogPath } else { '' }
 $agentStatus = if ($codexExitCode -eq 0) { 'passed' } elseif ($codexText -match '(?i)(unknown model|model.*not.*(found|available|support)|unsupported.*model|invalid.*model)') { 'blocked' } else { 'failed' }
 
-$headAfter = (& $git.Source -C $root rev-parse --verify HEAD 2>&1 | Out-String).Trim()
-$branchAfter = (& $git.Source -C $root branch --show-current 2>&1 | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headAfter) -or [string]::IsNullOrWhiteSpace($branchAfter)) {
-    Write-RunnerSummary -Status 'failed' -Details 'Could not verify Git HEAD or branch after Codex.' -Branch $branch -BranchAfter $branchAfter -HeadBefore $headBefore -HeadAfter $headAfter -TaskRelative $taskRelative -AgentStatus $agentStatus -AgentExitCode $codexExitCode -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
+$headAfterResult = Invoke-Git -Arguments @('-C', $root, 'rev-parse', '--verify', 'HEAD')
+$headAfter = $headAfterResult.StdOut.Trim()
+$branchAfterResult = Invoke-Git -Arguments @('-C', $root, 'branch', '--show-current')
+$branchAfter = $branchAfterResult.StdOut.Trim()
+if ($headAfterResult.ExitCode -ne 0 -or $branchAfterResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($headAfter) -or [string]::IsNullOrWhiteSpace($branchAfter)) {
+    Write-RunnerSummary -Status 'failed' -Details ("Could not verify Git HEAD or branch after Codex. HEAD error: {0}; branch error: {1}" -f $headAfterResult.StdErr.Trim(), $branchAfterResult.StdErr.Trim()) -Branch $branch -BranchAfter $branchAfter -HeadBefore $headBefore -HeadAfter $headAfter -TaskRelative $taskRelative -AgentStatus $agentStatus -AgentExitCode $codexExitCode -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
 }
 if ($headAfter -ne $headBefore) {
     Write-RunnerSummary -Status 'failed' -Details 'Codex changed Git HEAD. The runner did not rewrite or roll back history and stopped before testing.' -Branch $branch -BranchAfter $branchAfter -HeadBefore $headBefore -HeadAfter $headAfter -TaskRelative $taskRelative -AgentStatus $agentStatus -AgentExitCode $codexExitCode -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
