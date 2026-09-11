@@ -39,6 +39,7 @@ function Write-BuildResult {
     )
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ResultPath) | Out-Null
     if (-not (Test-Path $LogPath -PathType Leaf)) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
         Set-Content -Path $LogPath -Value $Details -Encoding UTF8
     }
     $result = [ordered]@{
@@ -57,6 +58,7 @@ function Write-BuildResult {
     $result | ConvertTo-Json -Depth 8 | Set-Content -Path $ResultPath -Encoding UTF8
 
     $summaryPath = Join-Path $root 'reports/test-summary.json'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $summaryPath) | Out-Null
     $summary = $null
     if (Test-Path $summaryPath -PathType Leaf) {
         try { $summary = Get-Content -Raw -Path $summaryPath | ConvertFrom-Json } catch { $summary = $null }
@@ -83,7 +85,7 @@ function Write-BuildResult {
         if ($check.log -and -not $logFiles.Contains([string]$check.log)) { $logFiles.Add([string]$check.log) }
     }
     $summary.logFiles = $logFiles
-    $summary.nextAction = if ($Status -eq 'passed') { 'EPF build passed. Open the generated artifact on the target 1C platform.' } else { 'Provide Windows, 1C:Enterprise 8.3, and the pinned cc-1c-skills toolchain, then rerun the build.' }
+    $summary.nextAction = if ($Status -eq 'passed') { 'EPF build passed. Open the generated artifact on the target 1C platform.' } else { 'Initialize config/epf-build.json, then provide Windows, 1C:Enterprise 8.3, and the pinned cc-1c-skills toolchain before rerunning the build.' }
     $summary | ConvertTo-Json -Depth 10 | Set-Content -Path $summaryPath -Encoding UTF8
     Write-Host ("EPF build status: {0}. {1}" -f $Status, $Details)
     exit $ExitCode
@@ -94,7 +96,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Nu
 Remove-Item -Force -ErrorAction SilentlyContinue $ResultPath, $LogPath
 
 if (-not (Test-Path $ConfigPath -PathType Leaf)) {
-    Write-BuildResult -Status 'failed' -Details ("Build configuration not found: {0}" -f $ConfigPath) -ExitCode 1
+    Write-BuildResult -Status 'blocked' -Details ("EPF configuration not found: {0}. Run scripts/init-project.ps1 first." -f $ConfigPath) -ExitCode 2
 }
 try {
     $config = Get-Content -Raw -Path $ConfigPath | ConvertFrom-Json
