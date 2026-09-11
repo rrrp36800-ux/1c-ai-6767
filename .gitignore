@@ -1,0 +1,25 @@
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Editor-local settings
+.vscode/settings.json
+.idea/
+
+# Generated reports and local analysis output
+reports/*.log
+reports/**/*.log
+bsl-report/
+out/
+dist/
+
+# Local 1C build artifacts
+*.epf
+*.erf
+*.cf
+*.cfu
+
+# OS files
+.DS_Store
+Thumbs.db
