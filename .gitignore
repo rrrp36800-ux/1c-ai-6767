@@ -10,9 +10,13 @@
 # Generated reports and local analysis output
 reports/*.log
 reports/**/*.log
+reports/bsl/
 bsl-report/
 out/
 dist/
+
+# Downloaded tool caches
+tools/bsl-language-server/
 
 # Local 1C build artifacts
 *.epf
