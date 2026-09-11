@@ -14,6 +14,8 @@ $codexLogPath = Join-Path $reportDir 'codex.jsonl'
 $codexFinalPath = Join-Path $reportDir 'codex-final.md'
 $model = 'gpt-5.6-luna'
 $allowedTestScopes = @('BslOnly', 'EpfBuildOnly')
+$codexExecutablePath = ''
+$codexExecutableKind = ''
 
 New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
 
@@ -72,6 +74,10 @@ function Write-RunnerSummary {
         }
         task = $TaskRelative
         model = $model
+        codex = [ordered]@{
+            executable = $codexExecutablePath
+            selection = $codexExecutableKind
+        }
         agent = [ordered]@{
             status = $AgentStatus
             exitCode = $AgentExitCode
@@ -91,6 +97,12 @@ function Write-RunnerSummary {
     if ($Status -eq 'passed') { exit 0 }
     if ($Status -eq 'failed') { exit 1 }
     exit 2
+}
+
+function Get-CommandPath {
+    param([object]$CommandInfo)
+    if ($CommandInfo.Path) { return [string]$CommandInfo.Path }
+    return [string]$CommandInfo.Source
 }
 
 $taskInputPath = if ([System.IO.Path]::IsPathRooted($Task)) { $Task } else { Join-Path (Get-Location).Path $Task }
@@ -197,17 +209,36 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headBefore)) {
     Write-RunnerSummary -Status 'failed' -Details 'Could not record the current Git HEAD before starting Codex.' -Branch $branch -BranchAfter $branch -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 1 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
 }
 
-$codex = Get-Command codex -ErrorAction SilentlyContinue
-if ($null -eq $codex) {
-    Write-RunnerSummary -Status 'blocked' -Details 'Codex CLI is not installed or is not available on PATH.' -Branch $branch -BranchAfter $branch -HeadBefore $headBefore -HeadAfter $headBefore -TaskRelative $taskRelative -AgentStatus 'blocked' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
+$codexCmdCandidate = @(Get-Command codex.cmd -All -ErrorAction SilentlyContinue | Where-Object { $_.CommandType -eq 'Application' }) | Select-Object -First 1
+if ($null -ne $codexCmdCandidate) {
+    $codexExecutablePath = Get-CommandPath $codexCmdCandidate
+    $codexExecutableKind = 'codex.cmd (preferred)'
+} else {
+    $codexCandidates = @(Get-Command codex -All -ErrorAction SilentlyContinue)
+    $codexNativeCandidate = @($codexCandidates | Where-Object {
+        $_.CommandType -eq 'Application' -and (Get-CommandPath $_) -notmatch '(?i)\.ps1$'
+    }) | Select-Object -First 1
+    if ($null -ne $codexNativeCandidate) {
+        $codexExecutablePath = Get-CommandPath $codexNativeCandidate
+        $codexExecutableKind = 'codex native executable'
+    }
 }
-$codexHelp = (& $codex.Source --help 2>&1 | Out-String)
+if ([string]::IsNullOrWhiteSpace($codexExecutablePath)) {
+    $codexScriptCandidate = @($codexCandidates | Where-Object {
+        $_.CommandType -eq 'ExternalScript' -or (Get-CommandPath $_) -match '(?i)\.ps1$'
+    }) | Select-Object -First 1
+    if ($null -ne $codexScriptCandidate) {
+        Write-RunnerSummary -Status 'blocked' -Details 'Codex was found only as codex.ps1. The runner will not change PowerShell ExecutionPolicy; provide codex.cmd or a native codex executable on PATH.' -Branch $branch -BranchAfter $branch -HeadBefore $headBefore -HeadAfter $headBefore -TaskRelative $taskRelative -AgentStatus 'blocked' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
+    }
+    Write-RunnerSummary -Status 'blocked' -Details 'Codex CLI was not found on PATH. Expected codex.cmd on Windows or a native codex executable on other supported environments.' -Branch $branch -BranchAfter $branch -HeadBefore $headBefore -HeadAfter $headBefore -TaskRelative $taskRelative -AgentStatus 'blocked' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
+}
+$codexHelp = (& $codexExecutablePath --help 2>&1 | Out-String)
 $codexHelpExitCode = $LASTEXITCODE
-$execHelp = (& $codex.Source exec --help 2>&1 | Out-String)
+$execHelp = (& $codexExecutablePath exec --help 2>&1 | Out-String)
 $execHelpExitCode = $LASTEXITCODE
 $helpText = $codexHelp + "`n" + $execHelp
 if ($codexHelpExitCode -ne 0 -or $execHelpExitCode -ne 0 -or $helpText -notmatch '--model' -or $helpText -notmatch '--sandbox' -or $helpText -notmatch '--json' -or $helpText -notmatch '--output-last-message') {
-    Write-RunnerSummary -Status 'blocked' -Details 'Installed Codex CLI does not expose the documented non-interactive model, sandbox, JSON, and final-message output flags.' -Branch $branch -BranchAfter $branch -HeadBefore $headBefore -HeadAfter $headBefore -TaskRelative $taskRelative -AgentStatus 'blocked' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
+    Write-RunnerSummary -Status 'blocked' -Details 'The selected Codex executable does not expose the documented non-interactive model, sandbox, JSON, and final-message output flags.' -Branch $branch -BranchAfter $branch -HeadBefore $headBefore -HeadAfter $headBefore -TaskRelative $taskRelative -AgentStatus 'blocked' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
 }
 
 $prompt = @"
@@ -245,7 +276,7 @@ $env:GIT_CONFIG_VALUE_0 = 'DISABLED_BY_AGENT_TASK_RUNNER'
 $env:GIT_TERMINAL_PROMPT = '0'
 try {
     Push-Location $root
-    $codexOutput = @(Get-Content -Raw -Path $promptPath | & $codex.Source exec --model $model --sandbox workspace-write --json --output-last-message $codexFinalPath - 2>&1)
+    $codexOutput = @(Get-Content -Raw -Path $promptPath | & $codexExecutablePath exec --model $model --sandbox workspace-write --json --output-last-message $codexFinalPath - 2>&1)
     $codexExitCode = $LASTEXITCODE
     $codexOutput | Set-Content -Path $codexLogPath -Encoding UTF8
 } catch {
