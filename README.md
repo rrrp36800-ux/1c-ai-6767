@@ -2,16 +2,16 @@
 
 Тестовый каркас для создания среды AI-разработки решений под **1С:Предприятие 8.3**.
 
-Сейчас репозиторий находится на этапе подготовки архитектуры. Прикладное решение 1С и бизнес-логика пока не добавляются.
+Сейчас репозиторий находится на этапе подготовки архитектуры. Прикладная бизнес-задача 1С не реализуется.
 
 ## Что уже есть
 
 - Правила работы AI-агентов и Git-процесс.
 - Архитектура development loop и контракты проверок.
-- Карта инструментов с разделением подтверждённых фактов и предположений.
-- PowerShell pipeline с отдельным BSL-only scope.
-- Минимальный BSL fixture без бизнес-логики.
-- Machine-readable summary и GitHub Actions для BSL-проверки.
+- BSL static analysis без локальной 1С.
+- Минимальный исходник внешней обработки `ToolchainSmoke` без бизнес-логики.
+- Локальный EPF build runner с явным `blocked`, если Windows или 1С отсутствуют.
+- Machine-readable summary и GitHub Actions для доступного BSL-слоя.
 
 ## Архитектура репозитория
 
@@ -23,82 +23,91 @@
 ├── .github/
 │   └── workflows/
 │       └── bsl-static-analysis.yml
+├── config/
+│   └── epf-build.json           # конфигурация локальной сборки EPF
 ├── docs/
 │   ├── AI_1C_tolik_qollanma.md
 │   ├── architecture.md
 │   └── tooling.md
-├── src/                         # будущие исходники конфигурации/расширений/обработок
+├── src/
+│   ├── ToolchainSmoke.xml       # корневой XML внешней обработки
+│   └── ToolchainSmoke/
+│       └── Ext/ObjectModule.bsl # пустой модуль без бизнес-логики
 ├── tests/
 │   └── fixtures/                # минимальные файлы для автоматических проверок
 ├── scripts/
-│   ├── test.ps1                 # общий pipeline
-│   └── test-bsl.ps1             # BSL-only слой
+│   ├── bootstrap-cc-1c-skills.ps1
+│   ├── build-epf.ps1
+│   ├── test.ps1
+│   └── test-bsl.ps1
 └── reports/
     └── test-summary.json        # короткий результат для AI и CI
 ```
 
-`src/` пока не содержит прикладного решения, а fixture в `tests/fixtures/` нужен только для проверки toolchain статического анализа.
+EPF и логи сборки не хранятся в Git: они создаются только локальным runner и попадают в ignored-пути.
 
-## Предполагаемый development loop
+## Development loop
 
 ```text
 AI agent
-  → изменение исходников
-  → статический анализ BSL
-  → сборка
-  → unit tests
-  → UI/integration tests
+  → исходники внешней обработки
+  → BSL static analysis
+  → EPF build через 1С Designer
+  → готовый .epf
   → reports/test-summary.json
 ```
 
-Первый реально работающий слой: `BSL source → BSL Language Server → JSON report → GitHub Actions → test-summary`. Подробные границы этапов описаны в [`docs/architecture.md`](docs/architecture.md).
+BSL-анализ выполняется на GitHub-hosted runner. Сборка бинарного `.epf` в этом PR подготовлена как локальный Windows-only шаг и не эмулируется на GitHub без 1С.
 
-## Инструменты
+## cc-1c-skills и OpenAI Codex
 
-- **BSL Language Server 1.0.7** — анализ `.bsl` без локальной 1С.
-- **Java 21** — Temurin в GitHub Actions; BSL Language Server официально поддерживает Java 17, 21 и 23.
-- **cc-1c-skills** — кандидат для будущих AI-операций с форматами и инструментами 1С.
-- **YaXUnit** — кандидат для будущих автоматизированных тестов 1С.
-- **Git** — ветки, коммиты и воспроизводимая история изменений.
-- **GitHub Actions** — запуск BSL-проверки на GitHub-hosted runner.
-- **Локальная 1С:Предприятие 8.3** — требуется для будущей сборки и runtime-сценариев.
+Актуальный репозиторий `cc-1c-skills` публикует отдельные Codex-порты в `.codex/skills/`, а также документирует установку через Codex plugin marketplace. Для этого проекта зафиксирован commit `2c15b32e7f81f87cbdd5dba74964c4b25f5a0056` ветки `port-codex`.
 
-Команда BSL Language Server и SHA-256 JAR зафиксированы в [`docs/tooling.md`](docs/tooling.md).
+`scripts/bootstrap-cc-1c-skills.ps1` использует официальный `scripts/switch.py` из этого commit и устанавливает PowerShell-версию навыков в `.codex/skills/`. Это подготовка toolchain, а не доказательство наличия платформы 1С.
 
-## Запуск проверок
+## EPF build toolchain
 
-BSL-only scope:
+Конфигурация: `config/epf-build.json`.
+
+Локальный запуск:
 
 ```powershell
-./scripts/test.ps1 -BslOnly
+./scripts/test.ps1 -EpfBuildOnly
 ```
 
-Прямой запуск BSL-слоя:
+или напрямую:
 
 ```powershell
-./scripts/test-bsl.ps1
+./scripts/build-epf.ps1
 ```
 
-Скрипт скачивает зафиксированный JAR, проверяет SHA-256, запускает JSON reporter и сохраняет краткий summary, полный лог и полный JSON-отчёт.
+Runner вызывает подтверждённый `cc-1c-skills` `epf-build.ps1`, который использует пакетный режим `1cv8.exe DESIGNER` и `/LoadExternalDataProcessorOrReportFromFiles`. Успешный статус выдаётся только если команда завершилась с кодом `0` и создала непустой `build/ToolchainSmoke.epf`.
 
-Контракт exit codes:
+Если отсутствуют Windows, `powershell.exe`, `1cv8.exe` или локально устанавливаемый toolchain, результатом будет `blocked`, а не fake PASS. Результаты и полный лог: `reports/epf-build-result.json` и `reports/epf-build.log`.
 
-- `0` — все проверки выбранного scope реально завершились успешно;
-- `1` — ошибка структуры, запуска или анализа;
-- `2` — проверка заблокирована окружением или ещё не настроена.
+## Границы GitHub и локального runner
 
-`-BslOnly` возвращает `0` только после фактического BSL-анализа без диагностик severity `Error`. Обычный `./scripts/test.ps1` также включает будущие 1С build, unit и UI/integration checks; пока они не настроены, его общий результат остаётся `blocked`.
+Можно подготовить через GitHub:
 
-## Локальные требования
+- XML/BSL-исходники внешней обработки;
+- конфигурацию и PowerShell runner;
+- BSL static analysis;
+- review и историю изменений.
 
-Для BSL-only слоя требуются PowerShell, Java 17 или новее и доступ к GitHub Releases. Полный цикл дополнительно потребует локальную 1С, тестовую информационную базу и подтверждённые YaXUnit и UI/integration runners.
+Требует Windows + установленной 1С:Предприятие 8.3:
 
-Локальная 1С, сборка `.epf`, YaXUnit и UI/integration tests в этой задаче не проверялись.
+- запуск `1cv8.exe DESIGNER`;
+- проверка исходников платформой;
+- создание бинарного `.epf`;
+- проверка полученного файла в 1С.
 
-## Правила работы
+GitHub Actions этого PR не заявляет сборку `.epf`.
 
-- `main` напрямую не изменять: каждая задача выполняется в отдельной ветке и через Pull Request.
-- Не выдумывать объекты метаданных 1С и неизвестные API.
-- После добавления BSL-кода запускать подтверждённый статический анализ.
-- Не считать задачу выполненной только по виду файлов.
-- AI сначала читает краткий summary, а полный JSON и лог — только при необходимости.
+## Статусы и ограничения
+
+- `passed` — команда реально выполнилась и артефакт создан;
+- `failed` — toolchain запускался, но завершился ошибкой или не создал артефакт;
+- `blocked` — отсутствует обязательная среда или зависимость;
+- `not_run` — проверка ещё не запускалась.
+
+Локальная 1С, сборка `.epf`, YaXUnit и UI/integration tests не выполнялись в GitHub Actions этого проекта.
