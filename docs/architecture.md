@@ -9,8 +9,8 @@
 ```text
 architect task
   → local guarded Codex runner
-  → проектные изменения
-  → BSL/EPF configured scopes через scripts/test.ps1
+  → проектные изменения из Allowed/Forbidden changes
+  → task-selected BSL/EPF scopes через scripts/test.ps1
   → PASS / FAIL / BLOCKED
 ```
 
@@ -44,19 +44,24 @@ XML + BSL sources
 
 ### 5. Task handoff и локальный runner
 
-Архитектор пишет задачу в `tasks/<task>.md` по строгому шаблону. `scripts/run-agent-task.ps1`:
+Архитектор пишет задачу в `tasks/<task>.md` по строгому шаблону. `# Allowed changes` и `# Forbidden changes` выбранной task определяют область изменений агента; runner не накладывает глобальный запрет на 1С business logic и запрещает только unrelated changes.
+
+`scripts/run-agent-task.ps1`:
 
 1. требует существующий task внутри репозитория и проверяет его canonical path с границей каталога;
 2. требует ровно семь заголовков шаблона;
-3. проверяет Git repository, чистый working tree и не допускает `main`;
-4. сохраняет HEAD SHA и branch до Codex, затем проверяет, что они не изменились;
-5. проверяет фактическую поддержку Codex CLI для `exec`, `--model`, `--sandbox`, `--json` и `--output-last-message`;
-6. передаёт `AGENTS.md` и task в prompt через stdin;
-7. использует `codex exec --model gpt-5.6-luna --sandbox workspace-write --json`;
-8. запускает только `scripts/test.ps1 -BslOnly` и `scripts/test.ps1 -EpfBuildOnly` и агрегирует их результаты;
-9. восстанавливает исходный `reports/test-summary.json` после обоих scope-запусков;
-10. сохраняет краткий ignored report и логи;
-11. возвращает `passed` только если Codex, BSL и EPF завершились успешно.
+3. парсит только `# Required tests`;
+4. принимает только allowlist `BslOnly` и `EpfBuildOnly` в виде точных Markdown list items;
+5. блокирует отсутствующую, malformed или неизвестную test scope без выполнения текста из task;
+6. проверяет Git repository, чистый working tree и не допускает `main`;
+7. сохраняет HEAD SHA и branch до Codex, затем проверяет, что они не изменились;
+8. проверяет фактическую поддержку Codex CLI для `exec`, `--model`, `--sandbox`, `--json` и `--output-last-message`;
+9. передаёт `AGENTS.md` и task в prompt через stdin;
+10. использует `codex exec --model gpt-5.6-luna --sandbox workspace-write --json`;
+11. запускает только выбранные allowlisted scopes через фиксированные mappings к `scripts/test.ps1`;
+12. агрегирует результаты и сохраняет каждый scope в machine-readable summary;
+13. восстанавливает исходный `reports/test-summary.json` после scope-запусков;
+14. возвращает `passed` только если Codex и каждый выбранный scope завершились успешно.
 
 Полный режим `scripts/test.ps1` не изменяется и по-прежнему честно оставляет неподключённые 1C/unit/UI проверки в `not_run`/`blocked`. Runner не выдаёт PASS за эти проверки.
 
@@ -103,14 +108,14 @@ XML + BSL sources
 ## Границы ответственности
 
 - **Architect:** creates a scoped task document.
-- **Local runner:** validates safety, delegates, runs tests, and records status.
-- **Codex/Luna:** makes only the requested project changes.
+- **Local runner:** validates safety, delegates, runs task-selected allowlisted tests, and records status.
+- **Codex/Luna:** makes only the changes allowed by the selected task.
 - **1C/BSL toolchain:** validates the resulting project.
 - **GitHub:** receives a manually reviewed PR; runner never pushes or merges.
 
 ## Что намеренно не сделано
 
-- нет бизнес-логики;
+- нет бизнес-логики в этом PR;
 - нет форм, реквизитов и макетов;
 - нет утверждения, что `.epf` собран;
 - нет эмуляции 1С на GitHub-hosted runner;

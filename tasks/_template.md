@@ -24,4 +24,4 @@
 
 # Required tests
 
-<!-- List the exact checks the agent must run and their expected result. -->
+<!-- Use only allowlisted scopes for now: - BslOnly and/or - EpfBuildOnly. Unknown values and commands are blocked. -->

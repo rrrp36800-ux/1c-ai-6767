@@ -13,6 +13,7 @@ $promptPath = Join-Path $reportDir 'prompt.md'
 $codexLogPath = Join-Path $reportDir 'codex.jsonl'
 $codexFinalPath = Join-Path $reportDir 'codex-final.md'
 $model = 'gpt-5.6-luna'
+$allowedTestScopes = @('BslOnly', 'EpfBuildOnly')
 
 New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
 
@@ -54,6 +55,11 @@ function Write-RunnerSummary {
         $changedFiles += @(& $git.Source -C $root ls-files --others --exclude-standard 2>&1)
         $changedFiles = @($changedFiles | ForEach-Object { [string]$_ } | Where-Object { $_ } | ForEach-Object { Get-ProjectRelativePath $_ }) | Sort-Object -Unique
     }
+    $logFiles = @('reports/agent-task/codex.jsonl', 'reports/agent-task/codex-final.md')
+    foreach ($testRun in @($TestRuns)) {
+        if ($testRun -and $testRun.log) { $logFiles += [string]$testRun.log }
+        if ($testRun -and $testRun.summary) { $logFiles += [string]$testRun.summary }
+    }
     $summary = [ordered]@{
         schemaVersion = 2
         status = $Status
@@ -78,14 +84,7 @@ function Write-RunnerSummary {
             scopes = @($TestRuns)
         }
         changedFiles = @($changedFiles)
-        logs = @(
-            'reports/agent-task/codex.jsonl'
-            'reports/agent-task/codex-final.md'
-            'reports/agent-task/test-bsl.log'
-            'reports/agent-task/test-bsl-summary.json'
-            'reports/agent-task/test-epf.log'
-            'reports/agent-task/test-epf-summary.json'
-        )
+        logs = @($logFiles | Sort-Object -Unique)
     }
     $summary | ConvertTo-Json -Depth 12 | Set-Content -Path $summaryPath -Encoding UTF8
     Write-Host ("Agent task status: {0}. {1}" -f $Status, $Details)
@@ -125,6 +124,38 @@ $taskHeadings = @($taskContent -split "`r?`n" | Where-Object { $_ -match '^# ' }
 if (($taskHeadings -join "`n") -ne ($requiredHeadings -join "`n")) {
     Write-RunnerSummary -Status 'failed' -Details 'Task file must contain exactly the seven required level-one headings in the documented order.' -Branch '' -BranchAfter '' -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 1 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
 }
+
+$requiredTestsMatch = [regex]::Match($taskContent, '(?ms)^# Required tests[ \t]*\r?\n(?<body>.*?)(?=^# |\z)')
+if (-not $requiredTestsMatch.Success) {
+    Write-RunnerSummary -Status 'blocked' -Details 'The task must contain a # Required tests section.' -Branch '' -BranchAfter '' -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
+}
+$requiredTestsBody = $requiredTestsMatch.Groups['body'].Value
+$requiredTestsBody = [regex]::Replace($requiredTestsBody, '(?s)<!--.*?-->', '')
+$requiredTestScopes = New-Object System.Collections.Generic.List[string]
+$invalidRequiredTestLine = $null
+foreach ($line in @($requiredTestsBody -split "`r?`n")) {
+    $trimmedLine = $line.Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmedLine)) { continue }
+    if ($trimmedLine -notmatch '^- ([A-Za-z][A-Za-z0-9]*)$') {
+        $invalidRequiredTestLine = $trimmedLine
+        break
+    }
+    $scopeName = $Matches[1]
+    if ($allowedTestScopes -notcontains $scopeName) {
+        $invalidRequiredTestLine = $scopeName
+        break
+    }
+    if (-not $requiredTestScopes.Contains($scopeName)) {
+        [void]$requiredTestScopes.Add($scopeName)
+    }
+}
+if ($null -ne $invalidRequiredTestLine) {
+    Write-RunnerSummary -Status 'blocked' -Details ("Unsupported or malformed required test scope: '{0}'. Allowed scopes: {1}." -f $invalidRequiredTestLine, ($allowedTestScopes -join ', ')) -Branch '' -BranchAfter '' -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
+}
+if ($requiredTestScopes.Count -eq 0) {
+    Write-RunnerSummary -Status 'blocked' -Details ("The # Required tests section must contain at least one allowlisted scope: {0}." -f ($allowedTestScopes -join ', ')) -Branch '' -BranchAfter '' -HeadBefore '' -HeadAfter '' -TaskRelative $taskRelative -AgentStatus 'not_run' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2 -TestRuns @()
+}
+$requiredTestScopes = @($requiredTestScopes)
 
 $agentsPath = Join-Path $root 'AGENTS.md'
 if (-not (Test-Path -LiteralPath $agentsPath -PathType Leaf)) {
@@ -186,12 +217,13 @@ MANDATORY INSTRUCTIONS:
 1. Read and obey the AGENTS.md content included below.
 2. Read and obey the selected architect task included below.
 3. Work only in the current repository and current branch: $branch.
-4. Implement only the selected task. Do not add 1C business logic or unrelated features.
-5. Do not run git push, git merge, create a pull request, or switch to main.
-6. Do not modify generated build or report artifacts as deliverables.
-7. Run the required tests from the task and leave the working tree with the intended source changes only. Do not commit; the runner owns no commit or push operation.
+4. Treat the selected task's # Allowed changes and # Forbidden changes sections as the authoritative scope. The task may explicitly allow 1C business logic; do not impose a broader prohibition.
+5. Do not make unrelated changes outside the selected task scope.
+6. Do not run git push, git merge, create a pull request, or switch to main.
+7. Do not modify generated build or report artifacts as deliverables.
+8. Run the required tests from the task and leave the working tree with the intended source changes only. Do not commit; the runner owns no commit or push operation.
 
-The runner will execute the configured BSL and EPF scopes after this turn. Do not claim success unless both scopes pass.
+The runner will execute only the allowlisted test scopes selected by # Required tests after this turn. Do not claim success unless every selected scope passes.
 
 ===== AGENTS.md (mandatory) =====
 $agentsContent
@@ -253,9 +285,24 @@ $testSummaryBackup = Join-Path $reportDir 'test-summary.before.json'
 $hadTrackedTestSummary = Test-Path -LiteralPath $trackedTestSummary -PathType Leaf
 if ($hadTrackedTestSummary) { Copy-Item -LiteralPath $trackedTestSummary -Destination $testSummaryBackup -Force }
 
+$bslLogPath = Join-Path $reportDir 'test-bsl.log'
+$bslSummaryArtifact = Join-Path $reportDir 'test-bsl-summary.json'
+$epfLogPath = Join-Path $reportDir 'test-epf.log'
+$epfSummaryArtifact = Join-Path $reportDir 'test-epf-summary.json'
+
+function Get-TestScopeConfig {
+    param([string]$ScopeName)
+    switch ($ScopeName) {
+        'BslOnly' { return [pscustomobject]@{ Name = 'BslOnly'; Argument = '-BslOnly'; LogPath = $bslLogPath; SummaryPath = $bslSummaryArtifact } }
+        'EpfBuildOnly' { return [pscustomobject]@{ Name = 'EpfBuildOnly'; Argument = '-EpfBuildOnly'; LogPath = $epfLogPath; SummaryPath = $epfSummaryArtifact } }
+        default { throw ("No runner mapping exists for test scope '{0}'." -f $ScopeName) }
+    }
+}
+
 function Invoke-TestScope {
     param(
-        [string]$Scope,
+        [string]$ScopeName,
+        [string]$ScopeArgument,
         [string]$LogPath,
         [string]$SummaryArtifactPath
     )
@@ -263,7 +310,7 @@ function Invoke-TestScope {
     $exitCode = 1
     try {
         Remove-Item -LiteralPath $trackedTestSummary -Force -ErrorAction SilentlyContinue
-        $output = @(& $testPowerShell.Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $testScript $Scope 2>&1)
+        $output = @(& $testPowerShell.Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $testScript $ScopeArgument 2>&1)
         $exitCode = $LASTEXITCODE
         $output | ForEach-Object { [string]$_ } | Set-Content -Path $LogPath -Encoding UTF8
         if (Test-Path -LiteralPath $trackedTestSummary -PathType Leaf) {
@@ -286,7 +333,7 @@ function Invoke-TestScope {
         Set-Content -Path $LogPath -Value $_.Exception.ToString() -Encoding UTF8
     }
     [pscustomobject]@{
-        scope = $Scope
+        scope = $ScopeName
         status = $status
         exitCode = $exitCode
         log = (Get-ProjectRelativePath $LogPath)
@@ -294,15 +341,12 @@ function Invoke-TestScope {
     }
 }
 
-$bslLogPath = Join-Path $reportDir 'test-bsl.log'
-$bslSummaryArtifact = Join-Path $reportDir 'test-bsl-summary.json'
-$epfLogPath = Join-Path $reportDir 'test-epf.log'
-$epfSummaryArtifact = Join-Path $reportDir 'test-epf-summary.json'
-$bslResult = $null
-$epfResult = $null
+$testRuns = @()
 try {
-    $bslResult = Invoke-TestScope -Scope '-BslOnly' -LogPath $bslLogPath -SummaryArtifactPath $bslSummaryArtifact
-    $epfResult = Invoke-TestScope -Scope '-EpfBuildOnly' -LogPath $epfLogPath -SummaryArtifactPath $epfSummaryArtifact
+    foreach ($scopeName in $requiredTestScopes) {
+        $scopeConfig = Get-TestScopeConfig -ScopeName $scopeName
+        $testRuns += Invoke-TestScope -ScopeName $scopeConfig.Name -ScopeArgument $scopeConfig.Argument -LogPath $scopeConfig.LogPath -SummaryArtifactPath $scopeConfig.SummaryPath
+    }
 } finally {
     if ($hadTrackedTestSummary) {
         Copy-Item -LiteralPath $testSummaryBackup -Destination $trackedTestSummary -Force
@@ -310,7 +354,6 @@ try {
         Remove-Item -LiteralPath $trackedTestSummary -Force
     }
 }
-$testRuns = @($bslResult, $epfResult)
 $testStatuses = @($testRuns | ForEach-Object { $_.status })
 $testStatus = if ($testStatuses -contains 'failed') { 'failed' } elseif (($testStatuses -contains 'blocked') -or ($testStatuses -contains 'not_run')) { 'blocked' } else { 'passed' }
 $testExitCode = if ($testStatus -eq 'passed') { 0 } elseif ($testStatus -eq 'failed') { 1 } else { 2 }
@@ -323,5 +366,5 @@ if ($agentStatus -eq 'blocked' -or $testStatus -eq 'blocked') {
 } else {
     $overallStatus = 'failed'
 }
-$overallDetails = if ($overallStatus -eq 'passed') { 'Codex completed; BSL and EPF configured scopes passed.' } elseif ($overallStatus -eq 'blocked') { 'The agent task could not be completed in the current environment; inspect the scoped summaries and logs.' } else { 'The agent or a configured test scope failed; inspect the scoped summaries and logs.' }
+$overallDetails = if ($overallStatus -eq 'passed') { 'Codex completed; all task-selected configured scopes passed.' } elseif ($overallStatus -eq 'blocked') { 'The agent task could not be completed in the current environment; inspect the selected scope summaries and logs.' } else { 'The agent or a task-selected scope failed; inspect the selected scope summaries and logs.' }
 Write-RunnerSummary -Status $overallStatus -Details $overallDetails -Branch $branch -BranchAfter $branchAfter -HeadBefore $headBefore -HeadAfter $headAfter -TaskRelative $taskRelative -AgentStatus $agentStatus -AgentExitCode $codexExitCode -TestStatus $testStatus -TestExitCode $testExitCode -TestRuns $testRuns

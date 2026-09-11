@@ -57,8 +57,8 @@ EPF, Codex task-runner logs and local reports are not stored in Git. They are wr
 architect task: tasks/<task>.md
   → guarded local runner
   → Codex CLI / explicit gpt-5.6-luna
-  → project changes
-  → scripts/test.ps1 -BslOnly + -EpfBuildOnly
+  → project changes defined by Allowed/Forbidden changes
+  → task-selected BslOnly/EpfBuildOnly scopes
   → PASS / FAIL / BLOCKED
 ```
 
@@ -82,14 +82,16 @@ The documented non-interactive invocation is:
 codex exec --model gpt-5.6-luna --sandbox workspace-write --json --output-last-message <file> -
 ```
 
-The final `-` takes the complete mandatory prompt from stdin. The prompt contains `AGENTS.md` and the selected task. `workspace-write` is the least documented sandbox mode that permits project edits; the runner additionally disables the child's Git push URL and never calls merge or push itself.
+The final `-` takes the complete mandatory prompt from stdin. The prompt contains `AGENTS.md` and the selected task. `# Allowed changes` and `# Forbidden changes` are authoritative for the agent's scope; the runner does not globally prohibit 1C business logic, but it does prohibit unrelated changes. `workspace-write` is the least documented sandbox mode that permits project edits; the runner additionally disables the child's Git push URL and never calls merge or push itself.
 
-After the agent, the runner invokes only the configured MVP scopes:
+The runner parses only `# Required tests`. The current exact allowlist is:
 
-```powershell
-.\scripts\test.ps1 -BslOnly
-.\scripts\test.ps1 -EpfBuildOnly
+```text
+BslOnly
+EpfBuildOnly
 ```
+
+Only corresponding known mappings to `scripts/test.ps1 -BslOnly` and `scripts/test.ps1 -EpfBuildOnly` are executed. Missing, malformed, or unknown scopes return `blocked`; arbitrary commands from task Markdown are never evaluated. Results for each selected scope are saved in the ignored machine-readable runner summary.
 
 The full `scripts/test.ps1` command remains unchanged and keeps unconfigured 1C, YaXUnit, and UI/integration checks as `not_run`/`blocked`. The runner does not claim PASS for those unavailable checks. `gpt-5.6-luna` is selected explicitly, not assumed as a default. If the installed CLI lacks the model flag or the backend rejects Luna, the result is `blocked`, never a fake success.
 
