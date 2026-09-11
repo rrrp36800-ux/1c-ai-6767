@@ -11,7 +11,8 @@ if ($BslOnly -and $EpfBuildOnly) {
 }
 $root = Split-Path -Parent $PSScriptRoot
 $reportPath = Join-Path $root 'reports/test-summary.json'
-$requiredPaths = @('AGENTS.md', 'README.md', 'config', 'docs', 'src', 'tests', 'scripts', 'reports')
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $reportPath) | Out-Null
+$requiredPaths = @('AGENTS.md', 'README.md', 'config', 'docs', 'src', 'tests', 'scripts')
 $missingPaths = @($requiredPaths | Where-Object { -not (Test-Path (Join-Path $root $_)) })
 $layoutStatus = if ($missingPaths.Count -eq 0) { 'passed' } else { 'failed' }
 $layoutDetails = if ($missingPaths.Count -eq 0) { 'Repository bootstrap layout is present.' } else { 'Missing paths: ' + ($missingPaths -join ', ') }
