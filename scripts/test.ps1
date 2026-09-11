@@ -1,12 +1,17 @@
 [CmdletBinding()]
 param(
     [switch]$BslOnly,
-    [switch]$EpfBuildOnly
+    [switch]$EpfBuildOnly,
+    [string]$BslSourceDir
 )
 
 $ErrorActionPreference = 'Stop'
 if ($BslOnly -and $EpfBuildOnly) {
     Write-Host 'Use only one scope switch: -BslOnly or -EpfBuildOnly.' -ForegroundColor Red
+    exit 1
+}
+if (-not [string]::IsNullOrWhiteSpace($BslSourceDir) -and -not $BslOnly) {
+    Write-Host '-BslSourceDir is valid only with -BslOnly.' -ForegroundColor Red
     exit 1
 }
 $root = Split-Path -Parent $PSScriptRoot
@@ -32,7 +37,14 @@ if ($runBsl) {
     if ($null -ne $powerShell) {
         $bslResultPath = Join-Path $root 'reports/bsl/check-result.json'
         Remove-Item -Force -ErrorAction SilentlyContinue $bslResultPath
-        & $powerShell.Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'test-bsl.ps1')
+        $bslArguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'test-bsl.ps1'))
+        $bslPath = Join-Path $root 'src'
+        if (-not [string]::IsNullOrWhiteSpace($BslSourceDir)) {
+            $bslPath = if ([System.IO.Path]::IsPathRooted($BslSourceDir)) { $BslSourceDir } else { Join-Path $root $BslSourceDir }
+            $bslPath = [System.IO.Path]::GetFullPath($bslPath)
+        }
+        $bslArguments += @('-SourceDir', $bslPath)
+        & $powerShell.Source @bslArguments
         $bslExitCode = $LASTEXITCODE
         if (Test-Path $bslResultPath -PathType Leaf) {
             try {
@@ -99,8 +111,7 @@ if ($runBsl) {
     $checks += [ordered]@{ name = 'bsl-static-analysis'; status = $bslStatus; details = $bslDetails; report = $bslReport; log = $bslLog }
 }
 if ($runEpf) {
-    $epfDetailsForSummary = $epfDetails
-    $checks += [ordered]@{ name = 'epf-build'; status = $epfStatus; details = $epfDetailsForSummary; report = $epfReport; log = $epfLog }
+    $checks += [ordered]@{ name = 'epf-build'; status = $epfStatus; details = $epfDetails; report = $epfReport; log = $epfLog }
 }
 if (-not $BslOnly -and -not $EpfBuildOnly) {
     $checks += [ordered]@{ name = '1c-build'; status = 'not_run'; details = 'Full configuration build has not been confirmed.' }
