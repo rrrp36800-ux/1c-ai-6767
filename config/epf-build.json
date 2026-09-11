@@ -1,0 +1,11 @@
+{
+  "sourceFile": "src/ToolchainSmoke.xml",
+  "outputFile": "build/ToolchainSmoke.epf",
+  "v8Path": "",
+  "cc1cSkills": {
+    "repository": "https://github.com/Nikolay-Shirokov/cc-1c-skills.git",
+    "ref": "2c15b32e7f81f87cbdd5dba74964c4b25f5a0056",
+    "platform": "codex",
+    "runtime": "powershell"
+  }
+}

@@ -11,12 +11,16 @@
 reports/*.log
 reports/**/*.log
 reports/bsl/
+reports/epf-build-result.json
 bsl-report/
 out/
 dist/
+build/
 
-# Downloaded tool caches
+# Downloaded tool caches and generated Codex skills
 tools/bsl-language-server/
+tools/cc-1c-skills/
+.codex/
 
 # Local 1C build artifacts
 *.epf
