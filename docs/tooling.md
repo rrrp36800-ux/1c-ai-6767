@@ -1,94 +1,29 @@
-# Tooling map
+# Template tooling map
 
-Документ разделяет факты текущего репозитория, сведения из первичных источников и ограничения, которые ещё требуют проверки на Windows-машине с 1С.
+## Local prerequisites
 
-## 1. Подтверждено текущим проектом
+The full workflow requires Windows, 1C:Enterprise 8.3, Windows PowerShell or PowerShell 7, Git, authenticated Codex CLI, and Java 17+. The runner discovers `codex.cmd`, `java`, and `1cv8.exe` through PATH or the existing platform auto-discovery logic; it does not contain user-specific paths.
 
-- `AGENTS.md` требует отдельные ветки, Pull Request и честные автоматизированные проверки.
-- BSL Language Server уже запускается отдельно от 1С.
-- `config/epf-build.json` фиксирует исходник, output path и commit toolchain.
-- `scripts/bootstrap-cc-1c-skills.ps1` устанавливает Codex-порт навыков из pinned commit.
-- `scripts/build-epf.ps1` возвращает `blocked`, если Windows или `1cv8.exe` недоступны, и не считает код `0` достаточным без непустого `.epf`.
+## Codex runner
 
-## 2. cc-1c-skills и OpenAI Codex
-
-Официальный README репозитория `cc-1c-skills` прямо перечисляет OpenAI Codex как поддерживаемую платформу:
-
-- готовая раскладка: `.codex/skills/`;
-- готовые ветки: `port-codex` и `port-codex-py`;
-- plugin marketplace: `codex plugin marketplace add Nikolay-Shirokov/cc-1c-skills`, затем установка через `/plugins`;
-- локальная установка: официальный `scripts/switch.py codex --project-dir ...`.
-
-Для этого PR используется PowerShell-вариант, потому что подтверждённый `epf-build` skill запускает `powershell.exe` и `1cv8.exe`. Зафиксирован commit `2c15b32e7f81f87cbdd5dba74964c4b25f5a0056`, из которого bootstrap вызывает `switch.py` и получает `.codex/skills/epf-build`.
-
-## 3. Официальный toolchain 1С для EPF
-
-Официальная документация 1С описывает внешние обработки как отдельные файлы `.epf`. Для пакетного режима Designer официально предусмотрены операции:
-
-- `/DumpExternalDataProcessorOrReportToFiles` — выгрузка бинарной внешней обработки/отчёта в XML-файлы;
-- `/LoadExternalDataProcessorOrReportFromFiles` — загрузка XML-исходников во внешний `.epf`/`.erf`.
-
-Используемый skill формирует вызов в режиме `DESIGNER` с файловой информационной базой и командой:
+The runner uses the documented non-interactive command:
 
 ```text
-1cv8.exe DESIGNER /F <info-base> /LoadExternalDataProcessorOrReportFromFiles <root-xml> <output-epf>
+codex exec --model gpt-5.6-luna --sandbox workspace-write --json --output-last-message <file> -
 ```
 
-Этот синтаксис зафиксирован в исходнике `cc-1c-skills` и сопоставлен с разделом официальной документации 1С о пакетных командах внешних обработок. Параметры не расширяются непроверенными ключами.
+The prompt is supplied through UTF-8 stdin. The selected task's `Allowed changes`, `Forbidden changes`, and allowlisted `Required tests` are authoritative. Only `BslOnly` and `EpfBuildOnly` mappings are currently supported.
 
-## 4. Codex CLI task runner
+Windows resolution prefers `codex.cmd` when PowerShell would otherwise resolve `codex.ps1`. Native process stdout/stderr and exit-code handling is used for Git and Java version detection, so successful processes may write warnings to stderr without becoming failures.
 
-Официальная документация OpenAI подтверждает `codex exec` как non-interactive режим для скриптов и CI. Для этого runner подтверждены следующие элементы:
+## BSL
 
-- `codex exec` — non-interactive запуск;
-- prompt из stdin через завершающий `-`;
-- `--model` для явного выбора модели;
-- `--sandbox workspace-write` для разрешения правок в рабочем каталоге;
-- `--json` для JSONL-событий;
-- `--output-last-message` для сохранения финального сообщения.
+`test-bsl.ps1` downloads the pinned BSL Language Server when needed, verifies its SHA-256, requires Java 17+, writes JSON diagnostics, and returns `blocked` for missing prerequisites. Java version output is read from both stdout and stderr using the process exit code.
 
-Модель выбирается явно как `gpt-5.6-luna`, а не через неявный default. Официальная Codex models documentation перечисляет `gpt-5.6-luna` как Codex model/configuration value. Если локальный CLI не показывает нужные flags или backend отклоняет модель, runner возвращает `blocked`.
+## EPF
 
-В установленном окружении этой задачи команда `codex --version` завершилась `command not found`. Поэтому фактический agent run здесь не выполнялся и PASS не заявляется. Runner проверяет CLI перед запуском и не имитирует его наличие.
+`build-epf.ps1` reads `config/epf-build.json`, which is created from `config/epf-build.example.json` by `init-project.ps1`. It invokes the pinned `cc-1c-skills` builder and real `1cv8.exe`; a successful status requires a non-empty output artifact. A Linux GitHub runner cannot honestly perform this step.
 
-Источники:
+## CI and generated files
 
-- <https://developers.openai.com/codex/noninteractive>
-- <https://developers.openai.com/codex/cli>
-- <https://developers.openai.com/codex/models>
-- <https://developers.openai.com/codex/cli/reference>
-
-## 5. Что можно и нельзя сделать через GitHub
-
-Можно сделать на GitHub:
-
-- хранить и проверять XML/BSL-исходники;
-- установить Codex-совместимые skills в проекте;
-- запускать BSL static analysis;
-- подготовить конфигурацию и локальный runner;
-- review и версионирование.
-
-Нельзя честно заявить без платформы 1С:
-
-- выполненный `1cv8.exe DESIGNER`;
-- платформенную проверку/компиляцию модулей внешней обработки;
-- созданный бинарный `.epf`.
-
-Подготовленный runner требует Windows, Windows PowerShell и установленную 1С:Предприятие 8.3. При отсутствии любого обязательного компонента он возвращает `blocked`.
-
-## 6. Непроверенные ограничения
-
-- точная версия 1С:Предприятие 8.3 на целевом Windows ПК;
-- лицензирование и доступность Designer в headless-режиме;
-- совместимость формата `2.17` с фактической версией платформы;
-- успешный build конкретного fixture на целевой машине;
-- последующая проверка готового `.epf` в режиме 1С:Предприятие.
-
-## 7. Порядок проверки на Windows
-
-1. Установить 1С:Предприятие 8.3 и убедиться, что доступен `1cv8.exe`.
-2. Запустить `scripts/bootstrap-cc-1c-skills.ps1`.
-3. Запустить `scripts/test.ps1 -EpfBuildOnly`.
-4. Прочитать `reports/test-summary.json`.
-5. При `passed` проверить существование и открытие `build/ToolchainSmoke.epf` в 1С.
-6. Зафиксировать фактическую версию платформы и результат в следующем изменении; до этого GitHub PR не называет EPF собранным.
+GitHub Actions runs `scripts/test.ps1 -BslOnly` on Java 21 and uploads BSL reports. Local build output, Codex execution logs, downloaded skills, reports, temporary 1C databases, and other generated files are ignored. `tests/fixtures/StaticAnalysisSmoke.bsl` remains as the minimal neutral BSL fixture required for the automated static-analysis job.
