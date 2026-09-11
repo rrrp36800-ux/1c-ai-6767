@@ -10,6 +10,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$pathEntries = @(([Environment]::GetEnvironmentVariables()).Keys | Where-Object { $_ -match '^(?i)path$' })
+if ($pathEntries.Count -gt 1) {
+    $pathValue = [Environment]::GetEnvironmentVariable('Path', 'Process')
+    Remove-Item Env:PATH -ErrorAction SilentlyContinue
+    $env:Path = $pathValue
+}
 $root = Split-Path -Parent $PSScriptRoot
 $toolRepository = 'https://github.com/Nikolay-Shirokov/cc-1c-skills.git'
 $toolRef = '2c15b32e7f81f87cbdd5dba74964c4b25f5a0056'
