@@ -19,7 +19,8 @@ New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
 
 function Get-ProjectRelativePath([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
-    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $pathForResolution = if ([System.IO.Path]::IsPathRooted($Path)) { $Path } else { Join-Path $root $Path }
+    $fullPath = [System.IO.Path]::GetFullPath($pathForResolution)
     $rootPath = [System.IO.Path]::GetFullPath($root)
     if ($fullPath.StartsWith($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
         return $fullPath.Substring($rootPath.Length).TrimStart([char[]]@('\\', '/')).Replace([char]92, [char]47)
@@ -149,8 +150,8 @@ $codexHelpExitCode = $LASTEXITCODE
 $execHelp = (& $codex.Source exec --help 2>&1 | Out-String)
 $execHelpExitCode = $LASTEXITCODE
 $helpText = $codexHelp + "`n" + $execHelp
-if ($codexHelpExitCode -ne 0 -or $execHelpExitCode -ne 0 -or $helpText -notmatch '--model' -or $helpText -notmatch '--sandbox' -or $helpText -notmatch '--json') {
-    Write-RunnerSummary -Status 'blocked' -Details 'Installed Codex CLI does not expose the required non-interactive model, sandbox, and JSON output flags.' -Branch $branch -TaskRelative $taskRelative -AgentStatus 'blocked' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2
+if ($codexHelpExitCode -ne 0 -or $execHelpExitCode -ne 0 -or $helpText -notmatch '--model' -or $helpText -notmatch '--sandbox' -or $helpText -notmatch '--json' -or $helpText -notmatch '--output-last-message') {
+    Write-RunnerSummary -Status 'blocked' -Details 'Installed Codex CLI does not expose the documented non-interactive model, sandbox, JSON, and final-message output flags.' -Branch $branch -TaskRelative $taskRelative -AgentStatus 'blocked' -AgentExitCode 2 -TestStatus 'not_run' -TestExitCode 2
 }
 
 $prompt = @"
