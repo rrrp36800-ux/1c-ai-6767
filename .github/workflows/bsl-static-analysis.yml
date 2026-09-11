@@ -22,7 +22,7 @@ jobs:
 
       - name: Run BSL static analysis
         shell: pwsh
-        run: ./scripts/test.ps1 -BslOnly
+        run: ./scripts/test.ps1 -BslOnly -BslSourceDir tests/fixtures
 
       - name: Upload BSL reports
         if: always()
