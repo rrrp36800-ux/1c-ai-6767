@@ -65,7 +65,7 @@ java -version
 
 **Нега керак:** бу — код ёзиш, кўриш ва хатоларни кузатиш муҳити.
 
-1. VS Code → **Download** → ўрнатинг.
+1. [code.visualstudio.com](https://code.visualstudio.com) → **Download** → ўрнатинг.
 2. VS Code'ни очинг. Ичидаги терминал: **Terminal → New Terminal** (`Ctrl+~`).
 
 ---
