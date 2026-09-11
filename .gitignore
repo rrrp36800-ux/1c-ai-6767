@@ -12,6 +12,7 @@ reports/*.log
 reports/**/*.log
 reports/bsl/
 reports/epf-build-result.json
+reports/agent-task/
 bsl-report/
 out/
 dist/

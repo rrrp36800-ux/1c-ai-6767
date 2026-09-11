@@ -7,12 +7,11 @@
 ## Основной цикл
 
 ```text
-AI agent
-  → изменение исходников
-  → статический анализ BSL
-  → сборка внешней обработки через 1С Designer
-  → готовый .epf
-  → краткий machine-readable report
+architect task
+  → local guarded Codex runner
+  → проектные изменения
+  → BSL/EPF/full tests через scripts/test.ps1
+  → PASS / FAIL / BLOCKED
 ```
 
 ### 1. AI agent
@@ -43,7 +42,23 @@ XML + BSL sources
 
 Без Windows и установленной 1С платформа не может выполнить этот шаг. GitHub-hosted runner в текущем workflow используется только для BSL; сборка `.epf` не имитируется и не называется успешной.
 
-### 5. Краткий отчёт
+### 5. Task handoff и локальный runner
+
+Архитектор пишет задачу в `tasks/<task>.md` по строгому шаблону. `scripts/run-agent-task.ps1`:
+
+1. требует существующий task внутри репозитория;
+2. требует ровно семь заголовков шаблона;
+3. проверяет Git repository, чистый working tree и не допускает `main`;
+4. проверяет фактическую поддержку Codex CLI для `exec`, `--model`, `--sandbox` и `--json`;
+5. передаёт `AGENTS.md` и task в prompt через stdin;
+6. использует `codex exec --model gpt-5.6-luna --sandbox workspace-write --json`;
+7. запускает существующий `scripts/test.ps1` после агентского шага;
+8. сохраняет краткий ignored report и логи;
+9. возвращает `passed` только если Codex и тесты завершились успешно.
+
+Запрещённые для runner операции — `git push`, `git merge`, commit, PR, self-hosted runner и Notion trigger. Для дочернего Codex процесса push URL дополнительно блокируется через временную переменную Git-конфигурации.
+
+### 6. Краткий отчёт
 
 `reports/test-summary.json` — первый файл, который должен читать AI. Полные логи и подробные отчёты открываются только при необходимости.
 
@@ -83,10 +98,11 @@ XML + BSL sources
 
 ## Границы ответственности
 
-- **AI/GitHub:** создают исходники, конфигурацию, скрипты, BSL report и историю изменений.
-- **cc-1c-skills:** предоставляет подтверждённые XML/PowerShell-абстракции, включая `epf-init` и `epf-build`.
-- **Локальная 1С:** выполняет Designer и создаёт бинарный `.epf`.
-- **CI:** проверяет BSL и не выдаёт EPF PASS без реального Windows runner с 1С.
+- **Architect:** creates a scoped task document.
+- **Local runner:** validates safety, delegates, runs tests, and records status.
+- **Codex/Luna:** makes only the requested project changes.
+- **1C/BSL toolchain:** validates the resulting project.
+- **GitHub:** receives a manually reviewed PR; runner never pushes or merges.
 
 ## Что намеренно не сделано
 
@@ -94,6 +110,8 @@ XML + BSL sources
 - нет форм, реквизитов и макетов;
 - нет утверждения, что `.epf` собран;
 - нет эмуляции 1С на GitHub-hosted runner;
-- нет YaXUnit и UI/integration tests.
+- нет YaXUnit и UI/integration tests;
+- нет GitHub self-hosted runner;
+- нет автоматизации Notion trigger.
 
-Следующий шаг после проверки на Windows — выполнить локальный EPF build и сохранить фактический результат/ограничения в summary, не подменяя его предположением.
+Следующий шаг после проверки runner на машине с установленным Codex CLI — выполнить задачу на отдельной ветке и проверить фактический `passed`/`blocked` результат.
