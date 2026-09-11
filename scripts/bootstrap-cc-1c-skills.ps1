@@ -13,6 +13,20 @@ if ([string]::IsNullOrWhiteSpace($ToolRoot)) { $ToolRoot = Join-Path $root 'tool
 $ProjectDir = [System.IO.Path]::GetFullPath($ProjectDir)
 $ToolRoot = [System.IO.Path]::GetFullPath($ToolRoot)
 
+$localBuilder = Join-Path $ToolRoot '.codex/skills/epf-build/scripts/epf-build.ps1'
+if (Test-Path $localBuilder -PathType Leaf) {
+    $targetSkills = Join-Path $ProjectDir '.codex/skills'
+    New-Item -ItemType Directory -Force -Path $targetSkills | Out-Null
+    Copy-Item -Path (Join-Path $ToolRoot '.codex/skills/epf-build') -Destination $targetSkills -Recurse -Force
+    $installedBuilder = Join-Path $ProjectDir '.codex/skills/epf-build/scripts/epf-build.ps1'
+    if (Test-Path $installedBuilder -PathType Leaf) {
+        Write-Host ("[OK] cc-1c-skills {0} installed from local checkout" -f $Ref)
+        exit 0
+    }
+    Write-Host 'failed: the local Codex EPF build skill could not be installed.' -ForegroundColor Red
+    exit 1
+}
+
 $git = Get-Command git -ErrorAction SilentlyContinue
 $python = Get-Command python -ErrorAction SilentlyContinue
 if ($null -eq $git) {

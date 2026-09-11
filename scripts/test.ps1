@@ -92,7 +92,11 @@ if ($runBsl) {
     $checks += [ordered]@{ name = 'bsl-static-analysis'; status = $bslStatus; details = $bslDetails; report = $bslReport; log = $bslLog }
 }
 if ($runEpf) {
-    $checks += [ordered]@{ name = 'epf-build'; status = $epfStatus; details = $epfDetails; report = $epfReport; log = $epfLog }
+    $epfDetailsForSummary = $epfDetails
+    if ($epfResultPath -and (Test-Path $epfResultPath -PathType Leaf)) {
+        $epfDetailsForSummary = $epfDetailsForSummary.Replace((Join-Path $root 'build/ToolchainSmoke.epf'), 'build/ToolchainSmoke.epf')
+    }
+    $checks += [ordered]@{ name = 'epf-build'; status = $epfStatus; details = $epfDetailsForSummary; report = $epfReport; log = $epfLog }
 }
 if (-not $BslOnly -and -not $EpfBuildOnly) {
     $checks += [ordered]@{ name = '1c-build'; status = 'not_run'; details = 'Full configuration build has not been confirmed.' }
@@ -103,7 +107,10 @@ if (-not $BslOnly -and -not $EpfBuildOnly) {
 $statuses = @($checks | ForEach-Object { $_.status })
 $status = if ($statuses -contains 'failed') { 'failed' } elseif (($statuses -contains 'blocked') -or ($statuses -contains 'not_run')) { 'blocked' } else { 'passed' }
 $scope = if ($BslOnly) { 'bsl-static-analysis' } elseif ($EpfBuildOnly) { 'epf-build-toolchain' } else { 'full-pipeline' }
-$logFiles = @($checks | ForEach-Object { $_.log } | Where-Object { $_ }) | Select-Object -Unique
+$logFiles = [System.Collections.Generic.List[string]]::new()
+foreach ($check in @($checks)) {
+    if ($check.log -and -not $logFiles.Contains([string]$check.log)) { $logFiles.Add([string]$check.log) }
+}
 $summary = [ordered]@{
     schemaVersion = 1
     scope = $scope

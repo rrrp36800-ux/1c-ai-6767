@@ -25,9 +25,9 @@ function Get-ProjectRelativePath([string]$Path) {
     $fullPath = [System.IO.Path]::GetFullPath($Path)
     $rootPath = [System.IO.Path]::GetFullPath($root)
     if ($fullPath.StartsWith($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return ($fullPath.Substring($rootPath.Length).TrimStart([char[]]@('\\', '/')) -replace '\\', '/')
+        return $fullPath.Substring($rootPath.Length).TrimStart([char[]]@('\', '/')).Replace([char]92, [char]47)
     }
-    return $fullPath.Replace('\\', '/')
+    return $fullPath.Replace([char]92, [char]47)
 }
 
 function Write-BuildResult {
@@ -50,6 +50,7 @@ function Write-BuildResult {
         sourceFile = Get-ProjectRelativePath $SourceFile
         outputFile = Get-ProjectRelativePath $OutputFile
         artifactExists = $ArtifactExists
+        report = 'reports/epf-build-result.json'
         log = 'reports/epf-build.log'
         details = $Details
     }
@@ -61,11 +62,14 @@ function Write-BuildResult {
         try { $summary = Get-Content -Raw -Path $summaryPath | ConvertFrom-Json } catch { $summary = $null }
     }
     if ($null -eq $summary) { $summary = [pscustomobject]@{ schemaVersion = 1; checks = @(); logFiles = @() } }
+    $summaryDetails = $Details
+    if ($SourceFile) { $summaryDetails = $summaryDetails.Replace($SourceFile, (Get-ProjectRelativePath $SourceFile)) }
+    if ($OutputFile) { $summaryDetails = $summaryDetails.Replace($OutputFile, (Get-ProjectRelativePath $OutputFile)) }
     $otherChecks = @($summary.checks | Where-Object { $_.name -ne 'epf-build' })
     $summary.checks = @($otherChecks + [pscustomobject][ordered]@{
         name = 'epf-build'
         status = $Status
-        details = $Details
+        details = $summaryDetails
         report = 'reports/epf-build-result.json'
         log = 'reports/epf-build.log'
     })
@@ -74,7 +78,11 @@ function Write-BuildResult {
     $summary.generatedAt = [DateTime]::UtcNow.ToString('o')
     $summary.generatedBy = 'scripts/build-epf.ps1'
     $summary.reason = if ($Status -eq 'blocked') { $Details } else { $null }
-    $summary.logFiles = @($summary.checks | ForEach-Object { $_.log } | Where-Object { $_ }) | Select-Object -Unique
+    $logFiles = [System.Collections.Generic.List[string]]::new()
+    foreach ($check in @($summary.checks)) {
+        if ($check.log -and -not $logFiles.Contains([string]$check.log)) { $logFiles.Add([string]$check.log) }
+    }
+    $summary.logFiles = $logFiles
     $summary.nextAction = if ($Status -eq 'passed') { 'EPF build passed. Open the generated artifact on the target 1C platform.' } else { 'Provide Windows, 1C:Enterprise 8.3, and the pinned cc-1c-skills toolchain, then rerun the build.' }
     $summary | ConvertTo-Json -Depth 10 | Set-Content -Path $summaryPath -Encoding UTF8
     Write-Host ("EPF build status: {0}. {1}" -f $Status, $Details)
@@ -119,7 +127,7 @@ if ($null -eq $powershell) {
     Write-BuildResult -Status 'blocked' -Details 'Windows PowerShell (powershell.exe) was not found; the pinned Codex PowerShell skill requires it.' -ExitCode 2
 }
 if ([string]::IsNullOrWhiteSpace($V8Path)) {
-    $candidate = Get-ChildItem @("C:\\Program Files\\1cv8\\*\\bin\\1cv8.exe", "C:\\Program Files (x86)\\1cv8\\*\\bin\\1cv8.exe") -ErrorAction SilentlyContinue |
+    $candidate = Get-ChildItem @("C:\Program Files\1cv8\*\bin\1cv8.exe", "C:\Program Files (x86)\1cv8\*\bin\1cv8.exe") -ErrorAction SilentlyContinue |
         Sort-Object { try { [version]$_.Directory.Parent.Name } catch { [version]'0.0' } } -Descending |
         Select-Object -First 1
     if ($candidate) { $V8Path = $candidate.FullName }
