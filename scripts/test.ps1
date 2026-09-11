@@ -1,12 +1,17 @@
 [CmdletBinding()]
 param(
     [switch]$BslOnly,
-    [switch]$EpfBuildOnly
+    [switch]$EpfBuildOnly,
+    [string]$BslSourceDir
 )
 
 $ErrorActionPreference = 'Stop'
 if ($BslOnly -and $EpfBuildOnly) {
     Write-Host 'Use only one scope switch: -BslOnly or -EpfBuildOnly.' -ForegroundColor Red
+    exit 1
+}
+if (-not [string]::IsNullOrWhiteSpace($BslSourceDir) -and -not $BslOnly) {
+    Write-Host '-BslSourceDir is valid only with -BslOnly.' -ForegroundColor Red
     exit 1
 }
 $root = Split-Path -Parent $PSScriptRoot
@@ -30,9 +35,17 @@ if ($runBsl) {
     $bslStatus = 'blocked'
     $bslDetails = 'BSL helper did not produce a result.'
     if ($null -ne $powerShell) {
-        & $powerShell.Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'test-bsl.ps1')
-        $bslExitCode = $LASTEXITCODE
         $bslResultPath = Join-Path $root 'reports/bsl/check-result.json'
+        Remove-Item -Force -ErrorAction SilentlyContinue $bslResultPath
+        $bslArguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'test-bsl.ps1'))
+        $bslPath = Join-Path $root 'src'
+        if (-not [string]::IsNullOrWhiteSpace($BslSourceDir)) {
+            $bslPath = if ([System.IO.Path]::IsPathRooted($BslSourceDir)) { $BslSourceDir } else { Join-Path $root $BslSourceDir }
+            $bslPath = [System.IO.Path]::GetFullPath($bslPath)
+        }
+        $bslArguments += @('-SourceDir', $bslPath)
+        & $powerShell.Source @bslArguments
+        $bslExitCode = $LASTEXITCODE
         if (Test-Path $bslResultPath -PathType Leaf) {
             try {
                 $bslResult = Get-Content -Raw -Path $bslResultPath | ConvertFrom-Json
@@ -44,9 +57,11 @@ if ($runBsl) {
                 $bslStatus = 'failed'
                 $bslDetails = 'BSL helper result could not be parsed: ' + $_.Exception.Message
             }
-        } elseif ($bslExitCode -eq 0) {
+        } elseif ($bslExitCode -eq 2) {
+            $bslDetails = 'BSL helper was blocked without writing its result.'
+        } else {
             $bslStatus = 'failed'
-            $bslDetails = 'BSL helper returned success without writing its result.'
+            $bslDetails = "BSL helper exited with code $bslExitCode without writing its result."
         }
     } else {
         $bslDetails = 'Neither pwsh nor Windows PowerShell was found to run scripts/test-bsl.ps1.'
@@ -61,9 +76,10 @@ if ($runEpf) {
     $epfStatus = 'blocked'
     $epfDetails = 'EPF build helper did not produce a result.'
     if ($null -ne $powerShell) {
+        $epfResultPath = Join-Path $root 'reports/epf-build-result.json'
+        Remove-Item -Force -ErrorAction SilentlyContinue $epfResultPath
         & $powerShell.Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'build-epf.ps1')
         $epfExitCode = $LASTEXITCODE
-        $epfResultPath = Join-Path $root 'reports/epf-build-result.json'
         if (Test-Path $epfResultPath -PathType Leaf) {
             try {
                 $epfResult = Get-Content -Raw -Path $epfResultPath | ConvertFrom-Json
@@ -75,9 +91,11 @@ if ($runEpf) {
                 $epfStatus = 'failed'
                 $epfDetails = 'EPF build helper result could not be parsed: ' + $_.Exception.Message
             }
-        } elseif ($epfExitCode -eq 0) {
+        } elseif ($epfExitCode -eq 2) {
+            $epfDetails = 'EPF build helper was blocked without writing its result.'
+        } else {
             $epfStatus = 'failed'
-            $epfDetails = 'EPF build helper returned success without writing its result.'
+            $epfDetails = "EPF build helper exited with code $epfExitCode without writing its result."
         }
     } else {
         $epfDetails = 'Neither pwsh nor Windows PowerShell was found to run scripts/build-epf.ps1.'
@@ -93,11 +111,7 @@ if ($runBsl) {
     $checks += [ordered]@{ name = 'bsl-static-analysis'; status = $bslStatus; details = $bslDetails; report = $bslReport; log = $bslLog }
 }
 if ($runEpf) {
-    $epfDetailsForSummary = $epfDetails
-    if ($epfResultPath -and (Test-Path $epfResultPath -PathType Leaf)) {
-        $epfDetailsForSummary = $epfDetailsForSummary.Replace((Join-Path $root 'build/ToolchainSmoke.epf'), 'build/ToolchainSmoke.epf')
-    }
-    $checks += [ordered]@{ name = 'epf-build'; status = $epfStatus; details = $epfDetailsForSummary; report = $epfReport; log = $epfLog }
+    $checks += [ordered]@{ name = 'epf-build'; status = $epfStatus; details = $epfDetails; report = $epfReport; log = $epfLog }
 }
 if (-not $BslOnly -and -not $EpfBuildOnly) {
     $checks += [ordered]@{ name = '1c-build'; status = 'not_run'; details = 'Full configuration build has not been confirmed.' }

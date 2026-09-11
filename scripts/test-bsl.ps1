@@ -13,7 +13,7 @@ $version = '1.0.7'
 $downloadUrl = 'https://github.com/1c-syntax/bsl-language-server/releases/download/v1.0.7/bsl-language-server-1.0.7-exec.jar'
 $expectedSha256 = '9f62765edd344d66456da24c906eaf623a03c56e90e5aafee466200100909f64'
 
-if ([string]::IsNullOrWhiteSpace($SourceDir)) { $SourceDir = Join-Path $root 'tests/fixtures' }
+if ([string]::IsNullOrWhiteSpace($SourceDir)) { $SourceDir = Join-Path $root 'src' }
 if ([string]::IsNullOrWhiteSpace($ReportDirectory)) { $ReportDirectory = Join-Path $root 'reports/bsl' }
 if ([string]::IsNullOrWhiteSpace($LogPath)) { $LogPath = Join-Path $root 'reports/bsl-language-server.log' }
 if ([string]::IsNullOrWhiteSpace($ResultPath)) { $ResultPath = Join-Path $ReportDirectory 'check-result.json' }
@@ -109,7 +109,12 @@ function Write-CheckResult {
     $summaryPath = Join-Path $root 'reports/test-summary.json'
     $summary = $null
     if (Test-Path $summaryPath -PathType Leaf) { try { $summary = Get-Content -Raw -Path $summaryPath | ConvertFrom-Json } catch { $summary = $null } }
-    if ($null -eq $summary) { $summary = [pscustomobject]@{ schemaVersion = 1; checks = @(); logFiles = @() } }
+    if ($null -eq $summary) {
+        $summary = [pscustomobject]@{
+            schemaVersion = 1; scope = ''; status = ''; generatedAt = ''; generatedBy = ''; reason = $null
+            checks = @(); logFiles = @(); nextAction = ''
+        }
+    }
     $otherChecks = @($summary.checks | Where-Object { $_.name -ne 'bsl-static-analysis' })
     $summary.checks = @($otherChecks + [pscustomobject][ordered]@{ name = 'bsl-static-analysis'; status = $Status; details = $Details; report = $relativeReport; log = $relativeLog })
     $summary.scope = 'bsl-static-analysis'; $summary.status = $Status; $summary.generatedAt = [DateTime]::UtcNow.ToString('o'); $summary.generatedBy = 'scripts/test-bsl.ps1'
@@ -128,20 +133,38 @@ if (-not (Test-Path $SourceDir -PathType Container)) { Write-CheckResult -Status
 $bslFiles = @(Get-ChildItem -Path $SourceDir -Filter '*.bsl' -File -Recurse)
 if ($bslFiles.Count -eq 0) { Write-CheckResult -Status 'failed' -Details 'No .bsl files were found in the source directory.' -ExitCode 1 }
 
-$java = Get-Command java -ErrorAction SilentlyContinue
-if ($null -eq $java) { Write-CheckResult -Status 'blocked' -Details 'Java was not found on PATH. BSL Language Server requires a Java virtual machine.' -ExitCode 2 }
-$javaPath = $java.Path
-$javaVersionResult = Invoke-NativeProcess -FilePath $javaPath -Arguments @('-version')
-$javaVersionOutput = (($javaVersionResult.StdOut + "`n" + $javaVersionResult.StdErr).Trim())
-if ($javaVersionResult.ExitCode -ne 0) {
-    Write-CheckResult -Status 'blocked' -Details ("Java -version exited with code {0}; Java stderr: {1}" -f $javaVersionResult.ExitCode, $javaVersionResult.StdErr.Trim()) -ExitCode 2
+$javaCandidates = [System.Collections.Generic.List[string]]::new()
+$pathJava = Get-Command java -ErrorAction SilentlyContinue
+if ($pathJava) { $javaCandidates.Add([string]$pathJava.Source) }
+if ($env:JAVA_HOME) { $javaCandidates.Add((Join-Path $env:JAVA_HOME 'bin/java.exe')) }
+if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+    foreach ($pattern in @(
+        'C:\Program Files\Eclipse Adoptium\jdk-*\bin\java.exe',
+        'C:\Program Files\Java\jdk-*\bin\java.exe',
+        'C:\Program Files\Microsoft\jdk-*\bin\java.exe'
+    )) {
+        foreach ($candidate in @(Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue | Sort-Object FullName -Descending)) {
+            $javaCandidates.Add($candidate.FullName)
+        }
+    }
 }
-$javaMatch = [regex]::Match($javaVersionOutput, '(?i)version\s+"(?<version>[^"]+)"')
-if (-not $javaMatch.Success) { Write-CheckResult -Status 'blocked' -Details 'Java was found, but its version could not be determined from stdout/stderr.' -ExitCode 2 }
-$javaVersion = $javaMatch.Groups['version'].Value
-$javaParts = $javaVersion.Split('.')
-$javaMajor = if ($javaParts[0] -eq '1' -and $javaParts.Count -gt 1) { [int]$javaParts[1] } else { [int]($javaParts[0] -replace '[^0-9].*$', '') }
-if ($javaMajor -lt 17) { Write-CheckResult -Status 'blocked' -Details ("Java {0} is unsupported. BSL Language Server requires Java 17 or newer." -f $javaMajor) -ExitCode 2 }
+$javaPath = $null; $javaVersionOutput = ''; $javaVersion = ''; $javaMajor = 0
+foreach ($candidate in @($javaCandidates | Select-Object -Unique)) {
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+    $candidateResult = Invoke-NativeProcess -FilePath $candidate -Arguments @('-version')
+    $candidateOutput = ([string]$candidateResult.StdOut + "`n" + [string]$candidateResult.StdErr).Trim()
+    if ($candidateResult.ExitCode -ne 0) { continue }
+    $candidateMatch = [regex]::Match($candidateOutput, '(?i)version\s+"(?<version>[^"]+)"')
+    if (-not $candidateMatch.Success) { continue }
+    $candidateVersion = $candidateMatch.Groups['version'].Value
+    $candidateParts = $candidateVersion.Split('.')
+    $candidateMajor = if ($candidateParts[0] -eq '1' -and $candidateParts.Count -gt 1) { [int]$candidateParts[1] } else { [int]($candidateParts[0] -replace '[^0-9].*$', '') }
+    if ($candidateMajor -ge 17) {
+        $javaPath = $candidate; $javaVersionOutput = $candidateOutput; $javaVersion = $candidateVersion; $javaMajor = $candidateMajor
+        break
+    }
+}
+if (-not $javaPath) { Write-CheckResult -Status 'blocked' -Details 'Java 17 or newer was not found. BSL Language Server requires a supported Java virtual machine.' -ExitCode 2 }
 
 if (-not (Test-Path $JarPath -PathType Leaf)) {
     try { New-Item -ItemType Directory -Force -Path (Split-Path -Parent $JarPath) | Out-Null; Invoke-WebRequest -Uri $downloadUrl -OutFile $JarPath }
@@ -159,11 +182,13 @@ try {
     & $javaPath -jar $JarPath --analyze --srcDir $SourceDir --reporter json --outputDir $ReportDirectory 1> $stdoutPath 2> $stderrPath
     $analysisExitCode = $LASTEXITCODE
 } catch { $analysisError = $_.Exception.Message } finally { Pop-Location }
-$stdout = if (Test-Path $stdoutPath -PathType Leaf) { [string](Get-Content -Raw -Path $stdoutPath) } else { '' }
-$stderr = if (Test-Path $stderrPath -PathType Leaf) { [string](Get-Content -Raw -Path $stderrPath) } else { '' }
+$stdout = if (Test-Path $stdoutPath -PathType Leaf) { Get-Content -Raw -Path $stdoutPath } else { '' }
+$stderr = if (Test-Path $stderrPath -PathType Leaf) { Get-Content -Raw -Path $stderrPath } else { '' }
+if ($null -eq $stdout) { $stdout = '' }
+if ($null -eq $stderr) { $stderr = '' }
 $logParts = @(
     ('Command: java -jar <bsl-language-server-{0}-exec.jar> --analyze --srcDir <source> --reporter json --outputDir <report-directory>' -f $version)
-    ('Java: ' + $javaVersionOutput); ('Process exit code: ' + $analysisExitCode); ''; '--- stdout ---'; $stdout.TrimEnd(); '--- stderr ---'; $stderr.TrimEnd()
+    ('Java executable: ' + $javaPath); ('Java: ' + $javaVersionOutput); ('Process exit code: ' + $analysisExitCode); ''; '--- stdout ---'; $stdout.TrimEnd(); '--- stderr ---'; $stderr.TrimEnd()
 )
 if ($null -ne $analysisError) { $logParts += '--- PowerShell error ---'; $logParts += $analysisError }
 Set-Content -Path $LogPath -Value ($logParts -join [Environment]::NewLine) -Encoding UTF8
