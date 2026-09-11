@@ -1,126 +1,41 @@
-# Архитектура development loop
+# Reusable AI + 1C template architecture
 
-## Цель
+## Purpose
 
-Этот документ описывает каркас разработки решений 1С:Предприятие 8.3 через AI-агентов. В текущем PR прикладная бизнес-логика не добавляется: `src/` содержит только минимальный исходник внешней обработки для проверки toolchain.
+This repository supplies the repeatable control plane for future 1C projects. Domain metadata, forms, modules, and business rules belong to the project created from the template, not to this repository.
 
-## Основной цикл
+## Development loop
 
 ```text
-architect task
-  → local guarded Codex runner
-  → проектные изменения из Allowed/Forbidden changes
-  → task-selected BSL/EPF scopes через scripts/test.ps1
+scoped task
+  → guarded local Codex / GPT-5.6 Luna run
+  → selected BSL and/or EPF checks
+  → failed diagnostics returned to a bounded repair run
   → PASS / FAIL / BLOCKED
 ```
 
-### 1. AI agent
+The runner performs one initial run and at most two repair attempts. It never commits, pushes, merges, changes branch, or runs on `main`. It retries only a real `failed` selected test; `blocked` is an environment or contract result and stops the loop.
 
-Агент читает `AGENTS.md`, задачу и текущий `reports/test-summary.json`, затем предлагает минимальное изменение. Агент не должен считать задачу завершённой по одному только виду файлов.
+## Toolchain boundaries
 
-### 2. Исходники внешней обработки
+- `scripts/test-bsl.ps1` runs BSL Language Server with Java 17+ and does not require 1C.
+- `scripts/build-epf.ps1` runs the pinned `cc-1c-skills` EPF builder and real `1cv8.exe` on Windows.
+- `scripts/test.ps1` preserves the existing BSL and EPF scope semantics.
+- `.github/workflows/bsl-static-analysis.yml` verifies only the platform-independent BSL layer.
+- EPF build is intentionally local and returns `blocked` when Windows, 1C, or the builder is unavailable.
 
-`src/ToolchainSmoke.xml` и `src/ToolchainSmoke/Ext/ObjectModule.bsl` — минимальный scaffold внешней обработки без бизнес-логики. XML-структура подготовлена по формату, который использует `cc-1c-skills` `epf-init`. Этот PR не добавляет формы, реквизиты, макеты или прикладные процедуры.
+## Project initialization
 
-### 3. Статический анализ BSL
+`config/epf-build.example.json` is the tracked generic configuration. `scripts/init-project.ps1` safely creates the untracked `config/epf-build.json` with `ProjectName`, `sourceFile`, and `outputFile`; it refuses to overwrite an existing file without `-Force`. No build script change is needed for a new project.
 
-Существующий BSL слой запускается отдельно и не требует 1С. Он проверяет доступный fixture и формирует JSON report. Этот слой не создаёт `.epf`.
+## Diagnostics contract
 
-### 4. Сборка EPF
+The runner writes a machine-readable summary under `reports/agent-task/`. It includes only paths that exist. EPF attempts compare the pre-run and post-run `%TEMP%\stub_load_log.txt` fingerprint and copy a changed current log into the ignored report directory. This makes complete platform diagnostics available to a repair agent without treating stale temp files as current failures.
 
-Подтверждённый путь сборки:
+## Responsibilities
 
-```text
-XML + BSL sources
-  → cc-1c-skills epf-build.ps1
-  → 1cv8.exe DESIGNER /F <file infobase>
-    /LoadExternalDataProcessorOrReportFromFiles <root XML> <output EPF>
-  → non-empty .epf
-```
-
-`scripts/build-epf.ps1` вызывает официальный Codex-порт `epf-build.ps1` из зафиксированного `cc-1c-skills` commit. Скрипт проверяет исходники, наличие Windows и `1cv8.exe`, удаляет старый output перед запуском и требует непустой output после кода `0`.
-
-Без Windows и установленной 1С платформа не может выполнить этот шаг. GitHub-hosted runner в текущем workflow используется только для BSL; сборка `.epf` не имитируется и не называется успешной.
-
-### 5. Task handoff и локальный runner
-
-Архитектор пишет задачу в `tasks/<task>.md` по строгому шаблону. `# Allowed changes` и `# Forbidden changes` выбранной task определяют область изменений агента; runner не накладывает глобальный запрет на 1С business logic и запрещает только unrelated changes.
-
-`scripts/run-agent-task.ps1`:
-
-1. требует существующий task внутри репозитория и проверяет его canonical path с границей каталога;
-2. требует ровно семь заголовков шаблона;
-3. парсит только `# Required tests`;
-4. принимает только allowlist `BslOnly` и `EpfBuildOnly` в виде точных Markdown list items;
-5. блокирует отсутствующую, malformed или неизвестную test scope без выполнения текста из task;
-6. проверяет Git repository, чистый working tree и не допускает `main`;
-7. сохраняет HEAD SHA и branch до Codex, затем проверяет, что они не изменились;
-8. проверяет фактическую поддержку Codex CLI для `exec`, `--model`, `--sandbox`, `--json` и `--output-last-message`;
-9. передаёт `AGENTS.md` и task в prompt через stdin;
-10. использует `codex exec --model gpt-5.6-luna --sandbox workspace-write --json`;
-11. запускает только выбранные allowlisted scopes через фиксированные mappings к `scripts/test.ps1`;
-12. агрегирует результаты и сохраняет каждый scope в machine-readable summary;
-13. восстанавливает исходный `reports/test-summary.json` после scope-запусков;
-14. возвращает `passed` только если Codex и каждый выбранный scope завершились успешно.
-
-Полный режим `scripts/test.ps1` не изменяется и по-прежнему честно оставляет неподключённые 1C/unit/UI проверки в `not_run`/`blocked`. Runner не выдаёт PASS за эти проверки.
-
-Запрещённые для runner операции — `git push`, `git merge`, commit, PR, self-hosted runner и Notion trigger. Для дочернего Codex процесса push URL дополнительно блокируется через временную переменную Git-конфигурации.
-
-### 6. Краткий отчёт
-
-`reports/test-summary.json` — первый файл, который должен читать AI. Полные логи и подробные отчёты открываются только при необходимости.
-
-Схема summary:
-
-```json
-{
-  "schemaVersion": 1,
-  "scope": "bsl-static-analysis | epf-build-toolchain | full-pipeline | bootstrap",
-  "status": "not_run | blocked | passed | failed",
-  "generatedAt": "ISO-8601 timestamp",
-  "generatedBy": "producer name",
-  "reason": "optional short explanation",
-  "checks": [
-    {
-      "name": "check-name",
-      "status": "not_run | blocked | passed | failed",
-      "details": "short explanation",
-      "report": "optional/path/to/report",
-      "log": "optional/path/to/log"
-    }
-  ],
-  "logFiles": [],
-  "nextAction": "short actionable hint"
-}
-```
-
-Статусы `passed` и `failed` допустимы только после реального запуска соответствующей проверки. Отсутствие зависимости или ненастроенной команды означает `blocked`, а ещё не запускавшаяся проверка — `not_run`.
-
-### Exit codes для CI и локального runner
-
-- `0` — все проверки выбранного scope завершились успешно;
-- `1` — проверка запускалась, но обнаружена ошибка или отсутствует ожидаемый артефакт;
-- `2` — проверка заблокирована окружением или ещё не настроена.
-
-`./scripts/test.ps1 -BslOnly` запускает только BSL. `./scripts/test.ps1 -EpfBuildOnly` запускает только локальный EPF toolchain. Обычный `./scripts/test.ps1` запускает доступные BSL и EPF scopes, поэтому без 1С его общий результат остаётся `blocked`.
-
-## Границы ответственности
-
-- **Architect:** creates a scoped task document.
-- **Local runner:** validates safety, delegates, runs task-selected allowlisted tests, and records status.
-- **Codex/Luna:** makes only the changes allowed by the selected task.
-- **1C/BSL toolchain:** validates the resulting project.
-- **GitHub:** receives a manually reviewed PR; runner never pushes or merges.
-
-## Что намеренно не сделано
-
-- нет бизнес-логики в этом PR;
-- нет форм, реквизитов и макетов;
-- нет утверждения, что `.epf` собран;
-- нет эмуляции 1С на GitHub-hosted runner;
-- нет YaXUnit и UI/integration tests;
-- нет GitHub self-hosted runner;
-- нет автоматизации Notion trigger.
-
-Следующий шаг после проверки runner на машине с установленным Codex CLI — выполнить задачу на отдельной ветке и проверить фактический `passed`/`blocked` результат.
+- Architect: define a task and explicit Allowed/Forbidden scope.
+- Codex/Luna: make the minimum permitted project changes.
+- Runner: enforce safety, invoke fixed scopes, aggregate status, and bound repair.
+- BSL/1C toolchain: validate the resulting project.
+- GitHub: run BSL CI and review the Pull Request.

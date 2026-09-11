@@ -1,145 +1,92 @@
-# 1c-ai-6767
+# Reusable AI + 1C project template
 
-Тестовый каркас для создания среды AI-разработки решений под **1С:Предприятие 8.3**.
+This repository is a reusable starting point for AI-assisted 1C:Enterprise 8.3 projects. It provides the common infrastructure for:
 
-Сейчас репозиторий находится на этапе подготовки архитектуры. Прикладная бизнес-задача 1С не реализуется.
+- scoped architect tasks;
+- Codex CLI / GPT-5.6 Luna execution;
+- BSL Language Server analysis;
+- local EPF build through the pinned `cc-1c-skills` toolchain;
+- bounded repair (initial run plus at most two repair attempts);
+- machine-readable PASS / FAIL / BLOCKED results;
+- GitHub Actions for the platform-independent BSL check.
 
-## Что уже есть
+It intentionally contains no business domain, metadata object, form, or EPF fixture. Each project created from this template supplies its own 1C sources and EPF configuration.
 
-- Правила работы AI-агентов и Git-процесс.
-- Архитектура development loop и контракты проверок.
-- BSL static analysis без локальной 1С.
-- Минимальный исходник внешней обработки `ToolchainSmoke` без бизнес-логики.
-- Локальный EPF build runner с явным `blocked`, если Windows или 1С отсутствуют.
-- Архитекторский handoff через `tasks/<task>.md` и guarded local Codex runner.
-- Machine-readable summary и GitHub Actions для доступного BSL-слоя.
+## Prerequisites
 
-## Архитектура репозитория
+For the full local workflow, install:
 
-```text
-/
-├── AGENTS.md
-├── README.md
-├── .gitignore
-├── .github/
-│   └── workflows/
-│       └── bsl-static-analysis.yml
-├── config/
-│   └── epf-build.json           # конфигурация локальной сборки EPF
-├── docs/
-│   ├── AI_1C_tolik_qollanma.md
-│   ├── architecture.md
-│   └── tooling.md
-├── src/
-│   ├── ToolchainSmoke.xml       # корневой XML внешней обработки
-│   └── ToolchainSmoke/
-│       └── Ext/ObjectModule.bsl # пустой модуль без бизнес-логики
-├── tasks/
-│   ├── _template.md             # строгая структура handoff-задачи
-│   └── README.md
-├── tests/
-│   └── fixtures/                # минимальные файлы для автоматических проверок
-├── scripts/
-│   ├── bootstrap-cc-1c-skills.ps1
-│   ├── build-epf.ps1
-│   ├── run-agent-task.ps1
-│   ├── test.ps1
-│   └── test-bsl.ps1
-└── reports/
-    └── test-summary.json        # baseline; локальные результаты игнорируются
+- Windows;
+- 1C:Enterprise 8.3 with an available `1cv8.exe`;
+- Codex CLI authenticated for the target account and able to run `codex exec`;
+- Java 17 or newer for BSL Language Server;
+- Git;
+- Windows PowerShell or PowerShell 7;
+- network access for the pinned BSL/toolchain downloads when caches are absent.
+
+Codex authentication is performed by the normal Codex CLI login flow on the target machine. The runner does not store credentials or modify PowerShell ExecutionPolicy. On Windows it prefers `codex.cmd` discovered through `PATH`, then a native `codex` executable.
+
+## Initialize a project created from this template
+
+After creating a repository from this template:
+
+```powershell
+# Create a project branch; never work directly on main.
+git switch -c feat/project-bootstrap
+
+# Configure the project's EPF source and output paths.
+.\scripts\init-project.ps1 `
+  -ProjectName didox-automation `
+  -EpfSourcePath src\didox-automation.xml `
+  -EpfOutputPath build\didox-automation.epf
 ```
 
-EPF, Codex task-runner logs and local reports are not stored in Git. They are written to ignored paths.
+The initialization script creates `config/epf-build.json` from the tracked example and refuses to overwrite an existing configuration unless `-Force` is explicitly supplied. It does not create 1C metadata or business logic.
 
-## Development loop
+Add the project's XML/BSL sources, then create a task:
+
+```powershell
+Copy-Item tasks\_template.md tasks\001-project-bootstrap.md
+```
+
+Fill the seven required sections. In `# Required tests`, use only:
 
 ```text
-architect task: tasks/<task>.md
-  → guarded local runner
-  → Codex CLI / explicit gpt-5.6-luna
-  → project changes defined by Allowed/Forbidden changes
-  → task-selected BslOnly/EpfBuildOnly scopes
+- BslOnly
+- EpfBuildOnly
+```
+
+## Run the task workflow
+
+```text
+create task
+  → create feature branch
+  → run scripts/run-agent-task.ps1
+  → Codex / GPT-5.6 Luna changes the project
+  → selected tests run
+  → failed tests may receive up to two bounded repairs
   → PASS / FAIL / BLOCKED
 ```
-
-The runner is local only. It does not merge, push, commit, create a PR, add a GitHub self-hosted runner, or configure a Notion trigger.
-
-## Local agent task runner
 
 Run from a clean non-`main` branch:
 
 ```powershell
-.\scripts\run-agent-task.ps1 -Task tasks\001-smoke.md
+.\scripts\run-agent-task.ps1 -Task tasks\001-project-bootstrap.md
 ```
 
-The runner requires a task with the exact seven headings from `tasks/_template.md`, a clean Git working tree, the current branch not to be `main`, and an installed Codex CLI exposing `codex exec --model`, `--sandbox`, `--json`, and `--output-last-message`. The task path is canonicalized and must resolve inside the repository with a directory boundary, not a raw prefix match.
+The runner preserves clean-tree, branch, HEAD, main, push, and no-commit protections. It parses only the task's `# Required tests` section and never executes arbitrary commands from Markdown. `blocked` results do not start another model run. Failed selected scopes provide their existing log, summary, and EPF diagnostics to the repair prompt.
 
-Before Codex, the runner records the current branch and commit SHA. After Codex, it verifies both are unchanged; if Codex commits or switches branches, the runner returns `failed` and does not run tests or rewrite history.
+## Statuses
 
-The documented non-interactive invocation is:
+- `passed` — the agent and every selected scope completed successfully;
+- `failed` — the agent or a selected check ran and reported a real failure;
+- `blocked` — a required environment or dependency was unavailable, or the task/scope was invalid;
+- `not_run` — a check was not selected or has not been executed.
 
-```text
-codex exec --model gpt-5.6-luna --sandbox workspace-write --json --output-last-message <file> -
-```
+## Checks and boundaries
 
-The final `-` takes the complete mandatory prompt from stdin. The prompt contains `AGENTS.md` and the selected task. `# Allowed changes` and `# Forbidden changes` are authoritative for the agent's scope; the runner does not globally prohibit 1C business logic, but it does prohibit unrelated changes. `workspace-write` is the least documented sandbox mode that permits project edits; the runner additionally disables the child's Git push URL and never calls merge or push itself.
+GitHub-hosted CI runs `scripts/test.ps1 -BslOnly` with Java 21 and uploads BSL reports. It does not emulate 1C or claim an EPF build.
 
-The runner parses only `# Required tests`. The current exact allowlist is:
+The local `EpfBuildOnly` scope requires Windows, PowerShell, `1cv8.exe`, the configured source XML, and the pinned `cc-1c-skills` builder. It creates a non-empty `.epf` only when the real Designer process succeeds.
 
-```text
-BslOnly
-EpfBuildOnly
-```
-
-Only corresponding known mappings to `scripts/test.ps1 -BslOnly` and `scripts/test.ps1 -EpfBuildOnly` are executed. Missing, malformed, or unknown scopes return `blocked`; arbitrary commands from task Markdown are never evaluated. Results for each selected scope are saved in the ignored machine-readable runner summary.
-
-The full `scripts/test.ps1` command remains unchanged and keeps unconfigured 1C, YaXUnit, and UI/integration checks as `not_run`/`blocked`. The runner does not claim PASS for those unavailable checks. `gpt-5.6-luna` is selected explicitly, not assumed as a default. If the installed CLI lacks the model flag or the backend rejects Luna, the result is `blocked`, never a fake success.
-
-The current development sandbox did not have a `codex` executable when this runner was prepared. Therefore the runner was not executed here and no project change or test PASS is claimed for this local prototype.
-
-## EPF build toolchain
-
-Конфигурация: `config/epf-build.json`.
-
-Локальный запуск:
-
-```powershell
-./scripts/test.ps1 -EpfBuildOnly
-```
-
-или напрямую:
-
-```powershell
-./scripts/build-epf.ps1
-```
-
-Runner вызывает подтверждённый `cc-1c-skills` `epf-build.ps1`, который использует пакетный режим `1cv8.exe DESIGNER` и `/LoadExternalDataProcessorOrReportFromFiles`. Успешный статус выдаётся только если команда завершилась с кодом `0` и создала непустой `build/ToolchainSmoke.epf`.
-
-Если отсутствуют Windows, `powershell.exe`, `1cv8.exe` или локально устанавливаемый toolchain, результатом будет `blocked`, а не fake PASS. Результаты и полный лог: `reports/epf-build-result.json` и `reports/epf-build.log`.
-
-## Границы GitHub и локального runner
-
-Можно подготовить через GitHub:
-
-- XML/BSL-исходники внешней обработки;
-- конфигурацию и PowerShell runner;
-- BSL static analysis;
-- review и историю изменений.
-
-Требует Windows + установленной 1С:Предприятие 8.3:
-
-- запуск `1cv8.exe DESIGNER`;
-- проверка исходников платформой;
-- создание бинарного `.epf`;
-- проверка полученного файла в 1С.
-
-GitHub Actions этого PR не заявляет сборку `.epf`.
-
-## Статусы и ограничения
-
-- `passed` — команда реально выполнилась и артефакт создан;
-- `failed` — toolchain запускался, но завершился ошибкой или не создал артефакт;
-- `blocked` — отсутствует обязательная среда или зависимость;
-- `not_run` — проверка ещё не запускалась.
-
-Локальная 1С, сборка `.epf`, YaXUnit и UI/integration tests не выполнялись в GitHub Actions этого проекта.
+Generated reports, build output, Codex logs, downloaded skills, temporary 1C databases, and local artifacts are ignored by Git. Read `tasks/README.md`, `docs/architecture.md`, and `docs/tooling.md` for the detailed contracts.
