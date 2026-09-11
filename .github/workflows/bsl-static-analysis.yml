@@ -1,0 +1,37 @@
+name: BSL static analysis
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  bsl-static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Run BSL static analysis
+        shell: pwsh
+        run: ./scripts/test.ps1 -BslOnly
+
+      - name: Upload BSL reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bsl-static-analysis-reports
+          if-no-files-found: warn
+          path: |
+            reports/test-summary.json
+            reports/bsl-language-server.log
+            reports/bsl/bsl-json.json
+            reports/bsl/check-result.json
