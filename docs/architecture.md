@@ -10,7 +10,7 @@
 architect task
   → local guarded Codex runner
   → проектные изменения
-  → BSL/EPF/full tests через scripts/test.ps1
+  → BSL/EPF configured scopes через scripts/test.ps1
   → PASS / FAIL / BLOCKED
 ```
 
@@ -46,15 +46,19 @@ XML + BSL sources
 
 Архитектор пишет задачу в `tasks/<task>.md` по строгому шаблону. `scripts/run-agent-task.ps1`:
 
-1. требует существующий task внутри репозитория;
+1. требует существующий task внутри репозитория и проверяет его canonical path с границей каталога;
 2. требует ровно семь заголовков шаблона;
 3. проверяет Git repository, чистый working tree и не допускает `main`;
-4. проверяет фактическую поддержку Codex CLI для `exec`, `--model`, `--sandbox` и `--json`;
-5. передаёт `AGENTS.md` и task в prompt через stdin;
-6. использует `codex exec --model gpt-5.6-luna --sandbox workspace-write --json`;
-7. запускает существующий `scripts/test.ps1` после агентского шага;
-8. сохраняет краткий ignored report и логи;
-9. возвращает `passed` только если Codex и тесты завершились успешно.
+4. сохраняет HEAD SHA и branch до Codex, затем проверяет, что они не изменились;
+5. проверяет фактическую поддержку Codex CLI для `exec`, `--model`, `--sandbox`, `--json` и `--output-last-message`;
+6. передаёт `AGENTS.md` и task в prompt через stdin;
+7. использует `codex exec --model gpt-5.6-luna --sandbox workspace-write --json`;
+8. запускает только `scripts/test.ps1 -BslOnly` и `scripts/test.ps1 -EpfBuildOnly` и агрегирует их результаты;
+9. восстанавливает исходный `reports/test-summary.json` после обоих scope-запусков;
+10. сохраняет краткий ignored report и логи;
+11. возвращает `passed` только если Codex, BSL и EPF завершились успешно.
+
+Полный режим `scripts/test.ps1` не изменяется и по-прежнему честно оставляет неподключённые 1C/unit/UI проверки в `not_run`/`blocked`. Runner не выдаёт PASS за эти проверки.
 
 Запрещённые для runner операции — `git push`, `git merge`, commit, PR, self-hosted runner и Notion trigger. Для дочернего Codex процесса push URL дополнительно блокируется через временную переменную Git-конфигурации.
 

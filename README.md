@@ -58,7 +58,7 @@ architect task: tasks/<task>.md
   → guarded local runner
   → Codex CLI / explicit gpt-5.6-luna
   → project changes
-  → scripts/test.ps1
+  → scripts/test.ps1 -BslOnly + -EpfBuildOnly
   → PASS / FAIL / BLOCKED
 ```
 
@@ -72,7 +72,9 @@ Run from a clean non-`main` branch:
 .\scripts\run-agent-task.ps1 -Task tasks\001-smoke.md
 ```
 
-The runner requires a task with the exact seven headings from `tasks/_template.md`, a clean Git working tree, the current branch not to be `main`, and an installed Codex CLI exposing `codex exec --model`, `--sandbox`, and `--json`.
+The runner requires a task with the exact seven headings from `tasks/_template.md`, a clean Git working tree, the current branch not to be `main`, and an installed Codex CLI exposing `codex exec --model`, `--sandbox`, `--json`, and `--output-last-message`. The task path is canonicalized and must resolve inside the repository with a directory boundary, not a raw prefix match.
+
+Before Codex, the runner records the current branch and commit SHA. After Codex, it verifies both are unchanged; if Codex commits or switches branches, the runner returns `failed` and does not run tests or rewrite history.
 
 The documented non-interactive invocation is:
 
@@ -82,7 +84,14 @@ codex exec --model gpt-5.6-luna --sandbox workspace-write --json --output-last-m
 
 The final `-` takes the complete mandatory prompt from stdin. The prompt contains `AGENTS.md` and the selected task. `workspace-write` is the least documented sandbox mode that permits project edits; the runner additionally disables the child's Git push URL and never calls merge or push itself.
 
-`gpt-5.6-luna` is selected explicitly, not assumed as a default. If the installed CLI lacks the model flag or the backend rejects Luna, the result is `blocked`, never a fake success.
+After the agent, the runner invokes only the configured MVP scopes:
+
+```powershell
+.\scripts\test.ps1 -BslOnly
+.\scripts\test.ps1 -EpfBuildOnly
+```
+
+The full `scripts/test.ps1` command remains unchanged and keeps unconfigured 1C, YaXUnit, and UI/integration checks as `not_run`/`blocked`. The runner does not claim PASS for those unavailable checks. `gpt-5.6-luna` is selected explicitly, not assumed as a default. If the installed CLI lacks the model flag or the backend rejects Luna, the result is `blocked`, never a fake success.
 
 The current development sandbox did not have a `codex` executable when this runner was prepared. Therefore the runner was not executed here and no project change or test PASS is claimed for this local prototype.
 
