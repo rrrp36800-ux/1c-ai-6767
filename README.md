@@ -11,6 +11,7 @@
 - BSL static analysis без локальной 1С.
 - Минимальный исходник внешней обработки `ToolchainSmoke` без бизнес-логики.
 - Локальный EPF build runner с явным `blocked`, если Windows или 1С отсутствуют.
+- Архитекторский handoff через `tasks/<task>.md` и guarded local Codex runner.
 - Machine-readable summary и GitHub Actions для доступного BSL-слоя.
 
 ## Архитектура репозитория
@@ -33,37 +34,68 @@
 │   ├── ToolchainSmoke.xml       # корневой XML внешней обработки
 │   └── ToolchainSmoke/
 │       └── Ext/ObjectModule.bsl # пустой модуль без бизнес-логики
+├── tasks/
+│   ├── _template.md             # строгая структура handoff-задачи
+│   └── README.md
 ├── tests/
 │   └── fixtures/                # минимальные файлы для автоматических проверок
 ├── scripts/
 │   ├── bootstrap-cc-1c-skills.ps1
 │   ├── build-epf.ps1
+│   ├── run-agent-task.ps1
 │   ├── test.ps1
 │   └── test-bsl.ps1
 └── reports/
-    └── test-summary.json        # короткий результат для AI и CI
+    └── test-summary.json        # baseline; локальные результаты игнорируются
 ```
 
-EPF и логи сборки не хранятся в Git: они создаются только локальным runner и попадают в ignored-пути.
+EPF, Codex task-runner logs and local reports are not stored in Git. They are written to ignored paths.
 
 ## Development loop
 
 ```text
-AI agent
-  → исходники внешней обработки
-  → BSL static analysis
-  → EPF build через 1С Designer
-  → готовый .epf
-  → reports/test-summary.json
+architect task: tasks/<task>.md
+  → guarded local runner
+  → Codex CLI / explicit gpt-5.6-luna
+  → project changes defined by Allowed/Forbidden changes
+  → task-selected BslOnly/EpfBuildOnly scopes
+  → PASS / FAIL / BLOCKED
 ```
 
-BSL-анализ выполняется на GitHub-hosted runner. Сборка бинарного `.epf` в этом PR подготовлена как локальный Windows-only шаг и не эмулируется на GitHub без 1С.
+The runner is local only. It does not merge, push, commit, create a PR, add a GitHub self-hosted runner, or configure a Notion trigger.
 
-## cc-1c-skills и OpenAI Codex
+## Local agent task runner
 
-Актуальный репозиторий `cc-1c-skills` публикует отдельные Codex-порты в `.codex/skills/`, а также документирует установку через Codex plugin marketplace. Для этого проекта зафиксирован commit `2c15b32e7f81f87cbdd5dba74964c4b25f5a0056` ветки `port-codex`.
+Run from a clean non-`main` branch:
 
-`scripts/bootstrap-cc-1c-skills.ps1` использует официальный `scripts/switch.py` из этого commit и устанавливает PowerShell-версию навыков в `.codex/skills/`. Это подготовка toolchain, а не доказательство наличия платформы 1С.
+```powershell
+.\scripts\run-agent-task.ps1 -Task tasks\001-smoke.md
+```
+
+The runner requires a task with the exact seven headings from `tasks/_template.md`, a clean Git working tree, the current branch not to be `main`, and an installed Codex CLI exposing `codex exec --model`, `--sandbox`, `--json`, and `--output-last-message`. The task path is canonicalized and must resolve inside the repository with a directory boundary, not a raw prefix match.
+
+Before Codex, the runner records the current branch and commit SHA. After Codex, it verifies both are unchanged; if Codex commits or switches branches, the runner returns `failed` and does not run tests or rewrite history.
+
+The documented non-interactive invocation is:
+
+```text
+codex exec --model gpt-5.6-luna --sandbox workspace-write --json --output-last-message <file> -
+```
+
+The final `-` takes the complete mandatory prompt from stdin. The prompt contains `AGENTS.md` and the selected task. `# Allowed changes` and `# Forbidden changes` are authoritative for the agent's scope; the runner does not globally prohibit 1C business logic, but it does prohibit unrelated changes. `workspace-write` is the least documented sandbox mode that permits project edits; the runner additionally disables the child's Git push URL and never calls merge or push itself.
+
+The runner parses only `# Required tests`. The current exact allowlist is:
+
+```text
+BslOnly
+EpfBuildOnly
+```
+
+Only corresponding known mappings to `scripts/test.ps1 -BslOnly` and `scripts/test.ps1 -EpfBuildOnly` are executed. Missing, malformed, or unknown scopes return `blocked`; arbitrary commands from task Markdown are never evaluated. Results for each selected scope are saved in the ignored machine-readable runner summary.
+
+The full `scripts/test.ps1` command remains unchanged and keeps unconfigured 1C, YaXUnit, and UI/integration checks as `not_run`/`blocked`. The runner does not claim PASS for those unavailable checks. `gpt-5.6-luna` is selected explicitly, not assumed as a default. If the installed CLI lacks the model flag or the backend rejects Luna, the result is `blocked`, never a fake success.
+
+The current development sandbox did not have a `codex` executable when this runner was prepared. Therefore the runner was not executed here and no project change or test PASS is claimed for this local prototype.
 
 ## EPF build toolchain
 

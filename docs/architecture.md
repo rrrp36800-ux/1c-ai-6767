@@ -7,12 +7,11 @@
 ## Основной цикл
 
 ```text
-AI agent
-  → изменение исходников
-  → статический анализ BSL
-  → сборка внешней обработки через 1С Designer
-  → готовый .epf
-  → краткий machine-readable report
+architect task
+  → local guarded Codex runner
+  → проектные изменения из Allowed/Forbidden changes
+  → task-selected BSL/EPF scopes через scripts/test.ps1
+  → PASS / FAIL / BLOCKED
 ```
 
 ### 1. AI agent
@@ -43,7 +42,32 @@ XML + BSL sources
 
 Без Windows и установленной 1С платформа не может выполнить этот шаг. GitHub-hosted runner в текущем workflow используется только для BSL; сборка `.epf` не имитируется и не называется успешной.
 
-### 5. Краткий отчёт
+### 5. Task handoff и локальный runner
+
+Архитектор пишет задачу в `tasks/<task>.md` по строгому шаблону. `# Allowed changes` и `# Forbidden changes` выбранной task определяют область изменений агента; runner не накладывает глобальный запрет на 1С business logic и запрещает только unrelated changes.
+
+`scripts/run-agent-task.ps1`:
+
+1. требует существующий task внутри репозитория и проверяет его canonical path с границей каталога;
+2. требует ровно семь заголовков шаблона;
+3. парсит только `# Required tests`;
+4. принимает только allowlist `BslOnly` и `EpfBuildOnly` в виде точных Markdown list items;
+5. блокирует отсутствующую, malformed или неизвестную test scope без выполнения текста из task;
+6. проверяет Git repository, чистый working tree и не допускает `main`;
+7. сохраняет HEAD SHA и branch до Codex, затем проверяет, что они не изменились;
+8. проверяет фактическую поддержку Codex CLI для `exec`, `--model`, `--sandbox`, `--json` и `--output-last-message`;
+9. передаёт `AGENTS.md` и task в prompt через stdin;
+10. использует `codex exec --model gpt-5.6-luna --sandbox workspace-write --json`;
+11. запускает только выбранные allowlisted scopes через фиксированные mappings к `scripts/test.ps1`;
+12. агрегирует результаты и сохраняет каждый scope в machine-readable summary;
+13. восстанавливает исходный `reports/test-summary.json` после scope-запусков;
+14. возвращает `passed` только если Codex и каждый выбранный scope завершились успешно.
+
+Полный режим `scripts/test.ps1` не изменяется и по-прежнему честно оставляет неподключённые 1C/unit/UI проверки в `not_run`/`blocked`. Runner не выдаёт PASS за эти проверки.
+
+Запрещённые для runner операции — `git push`, `git merge`, commit, PR, self-hosted runner и Notion trigger. Для дочернего Codex процесса push URL дополнительно блокируется через временную переменную Git-конфигурации.
+
+### 6. Краткий отчёт
 
 `reports/test-summary.json` — первый файл, который должен читать AI. Полные логи и подробные отчёты открываются только при необходимости.
 
@@ -83,17 +107,20 @@ XML + BSL sources
 
 ## Границы ответственности
 
-- **AI/GitHub:** создают исходники, конфигурацию, скрипты, BSL report и историю изменений.
-- **cc-1c-skills:** предоставляет подтверждённые XML/PowerShell-абстракции, включая `epf-init` и `epf-build`.
-- **Локальная 1С:** выполняет Designer и создаёт бинарный `.epf`.
-- **CI:** проверяет BSL и не выдаёт EPF PASS без реального Windows runner с 1С.
+- **Architect:** creates a scoped task document.
+- **Local runner:** validates safety, delegates, runs task-selected allowlisted tests, and records status.
+- **Codex/Luna:** makes only the changes allowed by the selected task.
+- **1C/BSL toolchain:** validates the resulting project.
+- **GitHub:** receives a manually reviewed PR; runner never pushes or merges.
 
 ## Что намеренно не сделано
 
-- нет бизнес-логики;
+- нет бизнес-логики в этом PR;
 - нет форм, реквизитов и макетов;
 - нет утверждения, что `.epf` собран;
 - нет эмуляции 1С на GitHub-hosted runner;
-- нет YaXUnit и UI/integration tests.
+- нет YaXUnit и UI/integration tests;
+- нет GitHub self-hosted runner;
+- нет автоматизации Notion trigger.
 
-Следующий шаг после проверки на Windows — выполнить локальный EPF build и сохранить фактический результат/ограничения в summary, не подменяя его предположением.
+Следующий шаг после проверки runner на машине с установленным Codex CLI — выполнить задачу на отдельной ветке и проверить фактический `passed`/`blocked` результат.
