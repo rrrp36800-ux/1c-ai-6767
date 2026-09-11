@@ -30,9 +30,10 @@ if ($runBsl) {
     $bslStatus = 'blocked'
     $bslDetails = 'BSL helper did not produce a result.'
     if ($null -ne $powerShell) {
+        $bslResultPath = Join-Path $root 'reports/bsl/check-result.json'
+        Remove-Item -Force -ErrorAction SilentlyContinue $bslResultPath
         & $powerShell.Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'test-bsl.ps1')
         $bslExitCode = $LASTEXITCODE
-        $bslResultPath = Join-Path $root 'reports/bsl/check-result.json'
         if (Test-Path $bslResultPath -PathType Leaf) {
             try {
                 $bslResult = Get-Content -Raw -Path $bslResultPath | ConvertFrom-Json
@@ -44,9 +45,11 @@ if ($runBsl) {
                 $bslStatus = 'failed'
                 $bslDetails = 'BSL helper result could not be parsed: ' + $_.Exception.Message
             }
-        } elseif ($bslExitCode -eq 0) {
+        } elseif ($bslExitCode -eq 2) {
+            $bslDetails = 'BSL helper was blocked without writing its result.'
+        } else {
             $bslStatus = 'failed'
-            $bslDetails = 'BSL helper returned success without writing its result.'
+            $bslDetails = "BSL helper exited with code $bslExitCode without writing its result."
         }
     } else {
         $bslDetails = 'Neither pwsh nor Windows PowerShell was found to run scripts/test-bsl.ps1.'
@@ -61,9 +64,10 @@ if ($runEpf) {
     $epfStatus = 'blocked'
     $epfDetails = 'EPF build helper did not produce a result.'
     if ($null -ne $powerShell) {
+        $epfResultPath = Join-Path $root 'reports/epf-build-result.json'
+        Remove-Item -Force -ErrorAction SilentlyContinue $epfResultPath
         & $powerShell.Source -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'build-epf.ps1')
         $epfExitCode = $LASTEXITCODE
-        $epfResultPath = Join-Path $root 'reports/epf-build-result.json'
         if (Test-Path $epfResultPath -PathType Leaf) {
             try {
                 $epfResult = Get-Content -Raw -Path $epfResultPath | ConvertFrom-Json
@@ -75,9 +79,11 @@ if ($runEpf) {
                 $epfStatus = 'failed'
                 $epfDetails = 'EPF build helper result could not be parsed: ' + $_.Exception.Message
             }
-        } elseif ($epfExitCode -eq 0) {
+        } elseif ($epfExitCode -eq 2) {
+            $epfDetails = 'EPF build helper was blocked without writing its result.'
+        } else {
             $epfStatus = 'failed'
-            $epfDetails = 'EPF build helper returned success without writing its result.'
+            $epfDetails = "EPF build helper exited with code $epfExitCode without writing its result."
         }
     } else {
         $epfDetails = 'Neither pwsh nor Windows PowerShell was found to run scripts/build-epf.ps1.'
@@ -94,9 +100,6 @@ if ($runBsl) {
 }
 if ($runEpf) {
     $epfDetailsForSummary = $epfDetails
-    if ($epfResultPath -and (Test-Path $epfResultPath -PathType Leaf)) {
-        $epfDetailsForSummary = $epfDetailsForSummary.Replace((Join-Path $root 'build/ToolchainSmoke.epf'), 'build/ToolchainSmoke.epf')
-    }
     $checks += [ordered]@{ name = 'epf-build'; status = $epfStatus; details = $epfDetailsForSummary; report = $epfReport; log = $epfLog }
 }
 if (-not $BslOnly -and -not $EpfBuildOnly) {
