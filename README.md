@@ -2,19 +2,16 @@
 
 Тестовый каркас для создания среды AI-разработки решений под **1С:Предприятие 8.3**.
 
-Сейчас репозиторий находится на этапе подготовки архитектуры. Прикладное решение 1С, бизнес-логику, обработки, справочники и документы пока не добавляем.
+Сейчас репозиторий находится на этапе подготовки архитектуры. Прикладное решение 1С и бизнес-логика пока не добавляются.
 
 ## Что уже есть
 
-- `AGENTS.md` — правила работы AI-агентов и Git-процесс.
-- `docs/AI_1C_tolik_qollanma.md` — исходная инструкция по подготовке окружения.
-- `docs/architecture.md` — development loop и контракты проверок.
-- `docs/tooling.md` — карта инструментов, подтверждённых фактов и предположений.
-- `scripts/test.ps1` — единая точка запуска полного pipeline и BSL-only scope.
-- `scripts/test-bsl.ps1` — воспроизводимый запуск BSL Language Server.
-- `tests/fixtures/StaticAnalysisSmoke.bsl` — минимальный BSL fixture без бизнес-логики.
-- `reports/test-summary.json` — краткий machine-readable результат текущего состояния.
-- `.github/workflows/bsl-static-analysis.yml` — GitHub Actions для BSL-проверки.
+- Правила работы AI-агентов и Git-процесс.
+- Архитектура development loop и контракты проверок.
+- Карта инструментов с разделением подтверждённых фактов и предположений.
+- PowerShell pipeline с отдельным BSL-only scope.
+- Минимальный BSL fixture без бизнес-логики.
+- Machine-readable summary и GitHub Actions для BSL-проверки.
 
 ## Архитектура репозитория
 
@@ -40,7 +37,7 @@
     └── test-summary.json        # короткий результат для AI и CI
 ```
 
-Папка `src/` пока не содержит прикладного решения. `tests/fixtures/StaticAnalysisSmoke.bsl` нужен только для проверки toolchain статического анализа.
+`src/` пока не содержит прикладного решения, а fixture в `tests/fixtures/` нужен только для проверки toolchain статического анализа.
 
 ## Предполагаемый development loop
 
@@ -54,23 +51,23 @@ AI agent
   → reports/test-summary.json
 ```
 
-Первый реально работающий слой — `BSL source → BSL Language Server → JSON report → GitHub Actions → test-summary`. Подробное описание находится в [`docs/architecture.md`](docs/architecture.md).
+Первый реально работающий слой: `BSL source → BSL Language Server → JSON report → GitHub Actions → test-summary`. Подробные границы этапов описаны в [`docs/architecture.md`](docs/architecture.md).
 
 ## Инструменты
 
-- **BSL Language Server 1.0.7** — первый включённый автоматический слой анализа `.bsl` без локальной 1С.
-- **Java 21** — версия Temurin, используемая GitHub Actions; официальная документация BSL Language Server также указывает Java 17 и 23 как поддерживаемые версии.
+- **BSL Language Server 1.0.7** — анализ `.bsl` без локальной 1С.
+- **Java 21** — Temurin в GitHub Actions; BSL Language Server официально поддерживает Java 17, 21 и 23.
 - **cc-1c-skills** — кандидат для будущих AI-операций с форматами и инструментами 1С.
 - **YaXUnit** — кандидат для будущих автоматизированных тестов 1С.
 - **Git** — ветки, коммиты и воспроизводимая история изменений.
 - **GitHub Actions** — запуск BSL-проверки на GitHub-hosted runner.
-- **Локальная 1С:Предприятие 8.3** — всё ещё необходима для будущей сборки и runtime-сценариев.
+- **Локальная 1С:Предприятие 8.3** — требуется для будущей сборки и runtime-сценариев.
 
-Команда BSL Language Server подтверждена официальной документацией и зафиксирована вместе с SHA-256 JAR в [`docs/tooling.md`](docs/tooling.md).
+Команда BSL Language Server и SHA-256 JAR зафиксированы в [`docs/tooling.md`](docs/tooling.md).
 
 ## Запуск проверок
 
-Первый доступный scope:
+BSL-only scope:
 
 ```powershell
 ./scripts/test.ps1 -BslOnly
@@ -82,37 +79,21 @@ AI agent
 ./scripts/test-bsl.ps1
 ```
 
-Скрипт скачивает только зафиксированный `bsl-language-server-1.0.7-exec.jar`, проверяет SHA-256, запускает JSON reporter и сохраняет:
-
-- краткий результат — `reports/test-summary.json`;
-- полный лог — `reports/bsl-language-server.log`;
-- полный JSON-анализ — `reports/bsl/bsl-json.json`.
+Скрипт скачивает зафиксированный JAR, проверяет SHA-256, запускает JSON reporter и сохраняет краткий summary, полный лог и полный JSON-отчёт.
 
 Контракт exit codes:
 
-- `0` — все проверки в выбранном scope реально завершились успешно;
+- `0` — все проверки выбранного scope реально завершились успешно;
 - `1` — ошибка структуры, запуска или анализа;
 - `2` — проверка заблокирована окружением или ещё не настроена.
 
-`./scripts/test.ps1 -BslOnly` используется GitHub Actions и возвращает `0`, когда BSL-анализ завершён без диагностик severity `Error`. Обычный `./scripts/test.ps1` дополнительно включает будущие 1С build, unit и UI/integration checks; пока они не настроены, его общий результат остаётся `blocked`.
+`-BslOnly` возвращает `0` только после фактического BSL-анализа без диагностик severity `Error`. Обычный `./scripts/test.ps1` также включает будущие 1С build, unit и UI/integration checks; пока они не настроены, его общий результат остаётся `blocked`.
 
 ## Локальные требования
 
-Для BSL-only слоя требуется:
+Для BSL-only слоя требуются PowerShell, Java 17 или новее и доступ к GitHub Releases. Полный цикл дополнительно потребует локальную 1С, тестовую информационную базу и подтверждённые YaXUnit и UI/integration runners.
 
-- PowerShell;
-- Java 17 или новее;
-- доступ к GitHub Releases для загрузки зафиксированного JAR.
-
-Для полноценного цикла дополнительно потребуется локально подтвердить наличие:
-
-- Windows и PowerShell;
-- 1С:Предприятие 8.3 для операций, требующих runtime/конфигуратора;
-- Git и доступ к GitHub;
-- выбранных версий cc-1c-skills и YaXUnit;
-- тестовой информационной базы и UI/integration runner.
-
-Наличие локальной 1С, сборка `.epf`, YaXUnit и UI/integration tests в этой задаче не проверялись.
+Локальная 1С, сборка `.epf`, YaXUnit и UI/integration tests в этой задаче не проверялись.
 
 ## Правила работы
 
@@ -120,4 +101,4 @@ AI agent
 - Не выдумывать объекты метаданных 1С и неизвестные API.
 - После добавления BSL-кода запускать подтверждённый статический анализ.
 - Не считать задачу выполненной только по виду файлов.
-- AI сначала читает краткий `reports/test-summary.json`, а полный JSON и лог — только при необходимости.
+- AI сначала читает краткий summary, а полный JSON и лог — только при необходимости.
