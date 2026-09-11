@@ -3,7 +3,9 @@ param(
     [string]$ProjectDir,
     [string]$ToolRoot,
     [string]$Repository = 'https://github.com/Nikolay-Shirokov/cc-1c-skills.git',
-    [string]$Ref = '2c15b32e7f81f87cbdd5dba74964c4b25f5a0056'
+    [string]$Ref = '2c15b32e7f81f87cbdd5dba74964c4b25f5a0056',
+    [ValidateSet('codex')][string]$Platform = 'codex',
+    [ValidateSet('powershell')][string]$Runtime = 'powershell'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,14 +50,32 @@ if (-not (Test-Path (Join-Path $ToolRoot '.git'))) {
     }
 }
 
-& $git.Source -C $ToolRoot fetch --depth 1 origin $Ref
-if ($LASTEXITCODE -ne 0) {
-    Write-Host ("blocked: pinned cc-1c-skills revision could not be fetched: {0}" -f $Ref) -ForegroundColor Yellow
-    exit 2
+$refExists = $false
+& $git.Source -C $ToolRoot cat-file -e ("{0}^{{commit}}" -f $Ref) 2>$null
+if ($LASTEXITCODE -eq 0) { $refExists = $true }
+if (-not $refExists) {
+    & $git.Source -C $ToolRoot fetch --depth 1 origin $Ref
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ("blocked: pinned cc-1c-skills revision could not be fetched: {0}" -f $Ref) -ForegroundColor Yellow
+        exit 2
+    }
 }
-& $git.Source -C $ToolRoot checkout --detach FETCH_HEAD
+& $git.Source -C $ToolRoot checkout --detach $Ref
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'failed: cc-1c-skills checkout failed.' -ForegroundColor Red
+    exit 1
+}
+
+$localBuilder = Join-Path $ToolRoot '.codex/skills/epf-build/scripts/epf-build.ps1'
+if (Test-Path $localBuilder -PathType Leaf) {
+    $targetSkills = Join-Path $ProjectDir '.codex/skills'
+    New-Item -ItemType Directory -Force -Path $targetSkills | Out-Null
+    Copy-Item -Path (Join-Path $ToolRoot '.codex/skills/epf-build') -Destination $targetSkills -Recurse -Force
+    if (Test-Path (Join-Path $ProjectDir '.codex/skills/epf-build/scripts/epf-build.ps1') -PathType Leaf) {
+        Write-Host ("[OK] cc-1c-skills {0} installed from pinned checkout" -f $Ref)
+        exit 0
+    }
+    Write-Host 'failed: the pinned Codex EPF build skill could not be installed.' -ForegroundColor Red
     exit 1
 }
 
@@ -65,7 +85,7 @@ if (-not (Test-Path $switchScript -PathType Leaf)) {
     exit 1
 }
 
-& $python.Source $switchScript codex --runtime powershell --project-dir $ProjectDir
+& $python.Source $switchScript $Platform --runtime $Runtime --project-dir $ProjectDir
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'failed: the official cc-1c-skills Codex installation did not complete.' -ForegroundColor Red
     exit 1
