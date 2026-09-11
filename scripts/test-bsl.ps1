@@ -177,11 +177,23 @@ if ($actualSha256 -ne $expectedSha256) { Write-CheckResult -Status 'failed' -Det
 $stdoutPath = Join-Path $ReportDirectory 'bsl.stdout.log'; $stderrPath = Join-Path $ReportDirectory 'bsl.stderr.log'
 Remove-Item -Force -ErrorAction SilentlyContinue $stdoutPath, $stderrPath
 $analysisExitCode = -1; $analysisError = $null
+$cacheDirectory = $null
 try {
-    Push-Location $root
-    & $javaPath -jar $JarPath --analyze --srcDir $SourceDir --reporter json --outputDir $ReportDirectory 1> $stdoutPath 2> $stderrPath
-    $analysisExitCode = $LASTEXITCODE
-} catch { $analysisError = $_.Exception.Message } finally { Pop-Location }
+    # Give the server an explicit cache path so it does not resolve the
+    # inherited working directory while initializing its persistent cache.
+    $cacheDirectory = Join-Path $ReportDirectory ('bsl-ls-cache-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $cacheDirectory | Out-Null
+    $analysisResult = Invoke-NativeProcess -FilePath $javaPath -Arguments @(
+        ("-Dapp.cache.fullPath={0}" -f $cacheDirectory), '-jar', $JarPath,
+        '--analyze', '--srcDir', $SourceDir,
+        '--reporter', 'json', '--outputDir', $ReportDirectory
+    )
+    $analysisExitCode = $analysisResult.ExitCode
+    Set-Content -Path $stdoutPath -Value ([string]$analysisResult.StdOut) -Encoding UTF8
+    Set-Content -Path $stderrPath -Value ([string]$analysisResult.StdErr) -Encoding UTF8
+} catch { $analysisError = $_.Exception.Message } finally {
+    if ($null -ne $cacheDirectory) { Remove-Item -LiteralPath $cacheDirectory -Recurse -Force -ErrorAction SilentlyContinue }
+}
 $stdout = if (Test-Path $stdoutPath -PathType Leaf) { Get-Content -Raw -Path $stdoutPath } else { '' }
 $stderr = if (Test-Path $stderrPath -PathType Leaf) { Get-Content -Raw -Path $stderrPath } else { '' }
 if ($null -eq $stdout) { $stdout = '' }
