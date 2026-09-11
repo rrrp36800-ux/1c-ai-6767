@@ -20,6 +20,16 @@ function Resolve-ProjectPath([string]$Path) {
     return [System.IO.Path]::GetFullPath((Join-Path $root $Path))
 }
 
+function Get-ProjectRelativePath([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $rootPath = [System.IO.Path]::GetFullPath($root)
+    if ($fullPath.StartsWith($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return ($fullPath.Substring($rootPath.Length).TrimStart([char[]]@('\\', '/')) -replace '\\', '/')
+    }
+    return $fullPath.Replace('\\', '/')
+}
+
 function Write-BuildResult {
     param(
         [ValidateSet('passed', 'failed', 'blocked', 'not_run')][string]$Status,
@@ -31,16 +41,14 @@ function Write-BuildResult {
     if (-not (Test-Path $LogPath -PathType Leaf)) {
         Set-Content -Path $LogPath -Value $Details -Encoding UTF8
     }
-    $relativeSource = if ($SourceFile) { $SourceFile.Replace($root, '').TrimStart('\\', '/') -replace '\\', '/' } else { $null }
-    $relativeOutput = if ($OutputFile) { $OutputFile.Replace($root, '').TrimStart('\\', '/') -replace '\\', '/' } else { $null }
     $result = [ordered]@{
         schemaVersion = 1
         status = $Status
         check = 'epf-build'
         tool = 'cc-1c-skills epf-build + 1C Designer'
         toolRevision = '2c15b32e7f81f87cbdd5dba74964c4b25f5a0056'
-        sourceFile = $relativeSource
-        outputFile = $relativeOutput
+        sourceFile = Get-ProjectRelativePath $SourceFile
+        outputFile = Get-ProjectRelativePath $OutputFile
         artifactExists = $ArtifactExists
         log = 'reports/epf-build.log'
         details = $Details
@@ -111,7 +119,7 @@ if ($null -eq $powershell) {
     Write-BuildResult -Status 'blocked' -Details 'Windows PowerShell (powershell.exe) was not found; the pinned Codex PowerShell skill requires it.' -ExitCode 2
 }
 if ([string]::IsNullOrWhiteSpace($V8Path)) {
-    $candidate = Get-ChildItem @("C:\Program Files\1cv8\*\bin\1cv8.exe", "C:\Program Files (x86)\1cv8\*\bin\1cv8.exe") -ErrorAction SilentlyContinue |
+    $candidate = Get-ChildItem @("C:\\Program Files\\1cv8\\*\\bin\\1cv8.exe", "C:\\Program Files (x86)\\1cv8\\*\\bin\\1cv8.exe") -ErrorAction SilentlyContinue |
         Sort-Object { try { [version]$_.Directory.Parent.Name } catch { [version]'0.0' } } -Descending |
         Select-Object -First 1
     if ($candidate) { $V8Path = $candidate.FullName }
