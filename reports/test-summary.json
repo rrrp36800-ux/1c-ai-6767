@@ -1,10 +1,21 @@
 {
   "schemaVersion": 1,
+  "scope": "bootstrap",
   "status": "not_run",
   "generatedAt": "2026-09-11T04:31:16Z",
   "generatedBy": "repository-bootstrap",
-  "reason": "No local 1C runtime or confirmed test toolchain was available during repository setup.",
-  "checks": [],
-  "logFiles": [],
-  "nextAction": "Confirm BSL Language Server, 1C build, YaXUnit, and UI/integration test commands before enabling real checks."
+  "reason": "BSL static analysis has not been run in this checkout.",
+  "checks": [
+    {
+      "name": "bsl-static-analysis",
+      "status": "not_run",
+      "details": "Run scripts/test-bsl.ps1 or scripts/test.ps1 -BslOnly.",
+      "report": "reports/bsl/bsl-json.json",
+      "log": "reports/bsl-language-server.log"
+    }
+  ],
+  "logFiles": [
+    "reports/bsl-language-server.log"
+  ],
+  "nextAction": "Run the reproducible BSL Language Server check before enabling the remaining 1C and test layers."
 }

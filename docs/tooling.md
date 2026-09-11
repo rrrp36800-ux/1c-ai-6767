@@ -8,25 +8,41 @@
 - `AGENTS.md` требует не выдумывать объекты метаданных 1С и проверять неизвестные API.
 - `AGENTS.md` требует краткий machine-readable summary, чтобы AI не перечитывал полный лог без необходимости.
 - Перенесённая инструкция `docs/AI_1C_tolik_qollanma.md` перечисляет Claude Code, cc-1c-skills, BSL Language Server, Java, Node.js, VS Code, MCP и локальную 1С как части предлагаемого окружения.
-- До этой ветки в репозитории были только `AGENTS.md`, инструкция и короткий `README.md`; исходников 1С и тестов не было.
-- `scripts/test.ps1` сейчас является честным scaffold: он проверяет только структуру и фиксирует, что реальные проверки ещё не настроены.
+- `tests/fixtures/StaticAnalysisSmoke.bsl` — минимальный BSL fixture без прикладной бизнес-логики.
+- `scripts/test-bsl.ps1` и `scripts/test.ps1 -BslOnly` реализуют первый автоматический слой анализа.
 
-## 2. Подтверждено доступной документацией
+## 2. Подтверждено официальной документацией и репозиторием BSL Language Server
+
+### BSL Language Server
+
+Официальная документация подтверждает запуск JAR через Java, режим `--analyze`, параметры `--srcDir`, `--reporter` и `--outputDir`, а также JSON reporter, который создаёт `bsl-json.json` в output directory. JSON содержит `fileinfos` и diagnostics с severity `Error`, `Warning`, `Hint` и `Information`.
+
+В этой ветке зафиксирован последний стабильный релиз `v1.0.7`:
+
+- JAR: `bsl-language-server-1.0.7-exec.jar`;
+- официальный URL: <https://github.com/1c-syntax/bsl-language-server/releases/download/v1.0.7/bsl-language-server-1.0.7-exec.jar>;
+- SHA-256: `9f62765edd344d66456da24c906eaf623a03c56e90e5aafee466200100909f64`;
+- Java: минимально поддерживается 17; в документации также указаны 21 и 23.
+
+Команда, используемая скриптом:
+
+```powershell
+java -jar bsl-language-server-1.0.7-exec.jar --analyze --srcDir <source> --reporter json --outputDir <report-directory>
+```
+
+Источники:
+
+- <https://github.com/1c-syntax/bsl-language-server>
+- <https://github.com/1c-syntax/bsl-language-server/blob/develop/docs/en/index.md>
+- <https://github.com/1c-syntax/bsl-language-server/blob/develop/docs/en/reporters/json.md>
+- <https://github.com/1c-syntax/bsl-language-server/blob/develop/docs/en/systemRequirements.md>
+- <https://github.com/1c-syntax/bsl-language-server/releases/tag/v1.0.7>
 
 ### cc-1c-skills
 
 Официальный репозиторий описывает набор навыков для AI-агентов, охватывающий цикл разработки на платформе 1С:Предприятие 8.3, включая работу с конфигурациями, расширениями, внешними обработками, отчётами, тестированием и веб-клиентом.
 
 Источник: <https://github.com/Nikolay-Shirokov/cc-1c-skills>
-
-### BSL Language Server
-
-Официальная документация описывает реализацию Language Server Protocol для BSL и OneScript. В документации перечислены диагностика, анализ, форматирование и другие языковые операции, а также режимы запуска из командной строки. Точная команда зависит от версии и локального способа установки.
-
-Источники:
-
-- <https://1c-syntax.github.io/bsl-language-server/en/>
-- <https://github.com/1c-syntax/bsl-language-server>
 
 ### YaXUnit
 
@@ -37,39 +53,27 @@
 - <https://github.com/bia-technologies/yaxunit>
 - <https://bia-technologies.github.io/yaxunit>
 
-### Git
+### Git и GitHub Actions
 
-Git является базовым механизмом версионирования исходников, веток и Pull Request workflow. В текущей задаче он используется через GitHub MCP; локальные команды Git для разработчиков остаются обычным operational requirement.
-
-### GitHub Actions
-
-Официальная документация описывает Actions как механизм автоматизации workflow непосредственно в репозитории. В этом проекте Actions целесообразно подключать после подтверждения Windows/1С runner и команд локальной проверки.
+Git является базовым механизмом версионирования исходников, веток и Pull Request workflow. GitHub Actions используется в этой ветке только для подтверждённого BSL-шага: GitHub-hosted runner с Java 17 запускает PowerShell-скрипт, который сам проверяет и при необходимости скачивает зафиксированный JAR.
 
 Источник: <https://docs.github.com/en/actions>
 
-### Автоматизированное тестирование 1С
+## 3. Предположения, которые всё ещё требуют проверки
 
-Достоверный pipeline должен разделять BSL static analysis, сборку, unit tests и UI/integration tests. Набор конкретных runners и тестовых данных зависит от конфигурации, версии платформы и лицензирования, поэтому здесь зафиксирована архитектура, а не выдуманная команда запуска.
-
-## 3. Предположения, которые требуют проверки
-
-- Какая версия 1С:Предприятие 8.3 и какой режим запуска будут использоваться.
+- Какая версия 1С:Предприятие 8.3 и какой режим запуска будут использоваться для будущей сборки.
 - Где будет находиться тестовая информационная база и как она будет очищаться между прогонами.
-- Какой релиз BSL Language Server совместим с выбранной Java и какие параметры CLI нужно применять.
 - Как устанавливать и вызывать YaXUnit в CI и локально.
-- Может ли выбранный GitHub Actions runner запускать нужные операции 1С и имеет ли он доступ к лицензии/информационной базе.
-- Нужно ли подключать MCP-режим BSL Language Server или достаточно отдельного статического анализа.
+- Может ли выбранный runner запускать будущие операции 1С и имеет ли он доступ к лицензии/информационной базе.
 - Какие UI/integration tests будут стабильными и какие тестовые данные можно хранить без секретов.
 
-Пока эти пункты не проверены, `scripts/test.ps1` не должен заявлять о прохождении проверок.
+Пока эти пункты не проверены, full pipeline не должен заявлять о прохождении соответствующих проверок.
 
 ## 4. Предлагаемый порядок внедрения
 
-1. Зафиксировать версии Windows, 1С, Java, BSL Language Server и YaXUnit на тестовой машине.
-2. Добавить минимальный пример исходника в `src/` без бизнес-ценности.
-3. Подтвердить BSL analysis и формат его отчёта.
-4. Подтвердить сборку через локальную 1С.
-5. Добавить один unit-test набор YaXUnit.
-6. Добавить UI/integration сценарий на изолированной базе.
-7. Перенести только подтверждённые команды в `scripts/test.ps1` и GitHub Actions.
-8. Проверить, что `reports/test-summary.json` остаётся коротким, детерминированным и полезным для AI.
+1. Зафиксировать версии Windows и 1С на тестовой машине.
+2. Подтвердить сборку через локальную 1С.
+3. Добавить один unit-test набор YaXUnit.
+4. Добавить UI/integration сценарий на изолированной базе.
+5. Перенести только подтверждённые команды в full pipeline и GitHub Actions.
+6. Проверить, что `reports/test-summary.json` остаётся коротким, детерминированным и полезным для AI.
