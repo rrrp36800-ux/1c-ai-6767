@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "status": "not_run",
+  "generatedAt": "2026-09-11T04:31:16Z",
   "generatedBy": "repository-bootstrap",
   "reason": "No local 1C runtime or confirmed test toolchain was available during repository setup.",
   "checks": [],

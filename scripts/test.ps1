@@ -8,7 +8,7 @@ $reportPath = Join-Path $root 'reports/test-summary.json'
 $requiredPaths = @('AGENTS.md', 'README.md', 'docs', 'src', 'tests', 'scripts', 'reports')
 $missingPaths = @($requiredPaths | Where-Object { -not (Test-Path (Join-Path $root $_)) })
 
-$layoutStatus = if ($missingPaths.Count -eq 0) { 'ready' } else { 'failed' }
+$layoutStatus = if ($missingPaths.Count -eq 0) { 'passed' } else { 'failed' }
 $layoutDetails = if ($missingPaths.Count -eq 0) { 'Repository bootstrap layout is present.' } else { 'Missing paths: ' + ($missingPaths -join ', ') }
 
 $checks = @(
@@ -39,18 +39,32 @@ $checks = @(
   }
 )
 
-$status = if ($checks.status -contains 'failed') { 'failed' } elseif ($checks.status -contains 'not_run') { 'blocked' } else { 'ready' }
+$status = if ($checks.status -contains 'failed') {
+  'failed'
+} elseif (($checks.status -contains 'blocked') -or ($checks.status -contains 'not_run')) {
+  'blocked'
+} elseif (($checks.status | Where-Object { $_ -ne 'passed' }).Count -eq 0) {
+  'passed'
+} else {
+  'blocked'
+}
+
 $summary = [ordered]@{
   schemaVersion = 1
   status = $status
   generatedAt = [DateTime]::UtcNow.ToString('o')
+  generatedBy = 'scripts/test.ps1'
+  reason = if ($status -eq 'blocked') { 'One or more required checks are not configured or cannot run in the current environment.' } else { $null }
   checks = $checks
   logFiles = @()
   nextAction = 'Confirm the local 1C, BSL Language Server, YaXUnit and UI test toolchain before enabling real checks.'
 }
 
 $summary | ConvertTo-Json -Depth 6 | Set-Content -Path $reportPath -Encoding UTF8
-Write-Host ("Wrote {0} with status '{1}'. No test was reported as passed." -f $reportPath, $status)
+Write-Host ("Wrote {0} with status '{1}'. No test was reported as passed unless it actually ran." -f $reportPath, $status)
 
-if ($status -eq 'failed') { exit 1 }
-exit 2
+switch ($status) {
+  'passed' { exit 0 }
+  'failed' { exit 1 }
+  default { exit 2 }
+}
