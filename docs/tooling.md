@@ -17,7 +17,7 @@
 
 Официальная документация подтверждает запуск JAR через Java, режим `--analyze`, параметры `--srcDir`, `--reporter` и `--outputDir`, а также JSON reporter, который создаёт `bsl-json.json` в output directory. JSON содержит `fileinfos` и diagnostics с severity `Error`, `Warning`, `Hint` и `Information`.
 
-В этой ветке зафиксирован последний стабильный релиз `v1.0.7`:
+В этой ветке зафиксирован стабильный релиз `v1.0.7`:
 
 - JAR: `bsl-language-server-1.0.7-exec.jar`;
 - официальный URL: <https://github.com/1c-syntax/bsl-language-server/releases/download/v1.0.7/bsl-language-server-1.0.7-exec.jar>;
@@ -55,7 +55,7 @@ java -jar bsl-language-server-1.0.7-exec.jar --analyze --srcDir <source> --repor
 
 ### Git и GitHub Actions
 
-Git является базовым механизмом версионирования исходников, веток и Pull Request workflow. GitHub Actions используется в этой ветке только для подтверждённого BSL-шага: GitHub-hosted runner с Java 17 запускает PowerShell-скрипт, который сам проверяет и при необходимости скачивает зафиксированный JAR.
+Git является базовым механизмом версионирования исходников, веток и Pull Request workflow. GitHub Actions используется в этой ветке только для подтверждённого BSL-шага: GitHub-hosted runner с Temurin Java 21 запускает PowerShell-скрипт, который сам проверяет и при необходимости скачивает зафиксированный JAR.
 
 Источник: <https://docs.github.com/en/actions>
 
