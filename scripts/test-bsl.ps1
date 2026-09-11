@@ -13,21 +13,11 @@ $version = '1.0.7'
 $downloadUrl = 'https://github.com/1c-syntax/bsl-language-server/releases/download/v1.0.7/bsl-language-server-1.0.7-exec.jar'
 $expectedSha256 = '9f62765edd344d66456da24c906eaf623a03c56e90e5aafee466200100909f64'
 
-if ([string]::IsNullOrWhiteSpace($SourceDir)) {
-    $SourceDir = Join-Path $root 'tests/fixtures'
-}
-if ([string]::IsNullOrWhiteSpace($ReportDirectory)) {
-    $ReportDirectory = Join-Path $root 'reports/bsl'
-}
-if ([string]::IsNullOrWhiteSpace($LogPath)) {
-    $LogPath = Join-Path $root 'reports/bsl-language-server.log'
-}
-if ([string]::IsNullOrWhiteSpace($ResultPath)) {
-    $ResultPath = Join-Path $ReportDirectory 'check-result.json'
-}
-if ([string]::IsNullOrWhiteSpace($JarPath)) {
-    $JarPath = Join-Path $root 'tools/bsl-language-server/bsl-language-server-1.0.7-exec.jar'
-}
+if ([string]::IsNullOrWhiteSpace($SourceDir)) { $SourceDir = Join-Path $root 'tests/fixtures' }
+if ([string]::IsNullOrWhiteSpace($ReportDirectory)) { $ReportDirectory = Join-Path $root 'reports/bsl' }
+if ([string]::IsNullOrWhiteSpace($LogPath)) { $LogPath = Join-Path $root 'reports/bsl-language-server.log' }
+if ([string]::IsNullOrWhiteSpace($ResultPath)) { $ResultPath = Join-Path $ReportDirectory 'check-result.json' }
+if ([string]::IsNullOrWhiteSpace($JarPath)) { $JarPath = Join-Path $root 'tools/bsl-language-server/bsl-language-server-1.0.7-exec.jar' }
 
 $SourceDir = [System.IO.Path]::GetFullPath($SourceDir)
 $ReportDirectory = [System.IO.Path]::GetFullPath($ReportDirectory)
@@ -36,9 +26,7 @@ $ResultPath = [System.IO.Path]::GetFullPath($ResultPath)
 $JarPath = [System.IO.Path]::GetFullPath($JarPath)
 $reportPath = Join-Path $ReportDirectory 'bsl-json.json'
 
-function Get-RepoRelativePath {
-    param([string]$Path)
-
+function Get-RepoRelativePath([string]$Path) {
     $fullPath = [System.IO.Path]::GetFullPath($Path)
     $rootPath = [System.IO.Path]::GetFullPath($root)
     if ($fullPath.StartsWith($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -49,8 +37,7 @@ function Get-RepoRelativePath {
 
 function Write-CheckResult {
     param(
-        [ValidateSet('passed', 'failed', 'blocked', 'not_run')]
-        [string]$Status,
+        [ValidateSet('passed', 'failed', 'blocked', 'not_run')][string]$Status,
         [string]$Details,
         [int]$ExitCode,
         [int]$AnalysisExitCode = -1,
@@ -58,6 +45,8 @@ function Write-CheckResult {
         [int]$WarningCount = 0
     )
 
+    $relativeReport = Get-RepoRelativePath $reportPath
+    $relativeLog = Get-RepoRelativePath $LogPath
     $result = [ordered]@{
         schemaVersion = 1
         status = $Status
@@ -65,13 +54,10 @@ function Write-CheckResult {
         tool = 'BSL Language Server'
         toolVersion = $version
         sourceDir = Get-RepoRelativePath $SourceDir
-        report = Get-RepoRelativePath $reportPath
-        log = Get-RepoRelativePath $LogPath
+        report = $relativeReport
+        log = $relativeLog
         analysisExitCode = $AnalysisExitCode
-        diagnostics = [ordered]@{
-            errors = $ErrorCount
-            warnings = $WarningCount
-        }
+        diagnostics = [ordered]@{ errors = $ErrorCount; warnings = $WarningCount }
         details = $Details
     }
 
@@ -80,45 +66,28 @@ function Write-CheckResult {
 
     $summaryPath = Join-Path $root 'reports/test-summary.json'
     $summary = $null
-    if (Test-Path $summaryPath) {
-        try {
-            $summary = Get-Content -Raw -Path $summaryPath | ConvertFrom-Json
-        } catch {
-            $summary = $null
-        }
+    if (Test-Path $summaryPath -PathType Leaf) {
+        try { $summary = Get-Content -Raw -Path $summaryPath | ConvertFrom-Json } catch { $summary = $null }
     }
     if ($null -eq $summary) {
-        $summary = [pscustomobject]@{
-            schemaVersion = 1
-            status = 'not_run'
-            generatedAt = $null
-            generatedBy = 'scripts/test-bsl.ps1'
-            reason = $null
-            checks = @()
-            logFiles = @()
-            nextAction = $null
-        }
+        $summary = [pscustomobject]@{ schemaVersion = 1; checks = @(); logFiles = @() }
     }
 
     $otherChecks = @($summary.checks | Where-Object { $_.name -ne 'bsl-static-analysis' })
-    $bslCheck = [ordered]@{
+    $summary.checks = @($otherChecks + [pscustomobject][ordered]@{
         name = 'bsl-static-analysis'
         status = $Status
         details = $Details
-        report = Get-RepoRelativePath $reportPath
-        log = Get-RepoRelativePath $LogPath
-    }
-    $summary.checks = @($otherChecks + [pscustomobject]$bslCheck)
+        report = $relativeReport
+        log = $relativeLog
+    })
     $summary.scope = 'bsl-static-analysis'
+    $summary.status = $Status
     $summary.generatedAt = [DateTime]::UtcNow.ToString('o')
     $summary.generatedBy = 'scripts/test-bsl.ps1'
     $summary.reason = if ($Status -eq 'blocked') { $Details } else { $null }
     $summary.logFiles = @($summary.checks | ForEach-Object { $_.log } | Where-Object { $_ }) | Select-Object -Unique
-    $summary.nextAction = if ($Status -eq 'passed') {
-        'BSL analysis passed. Configure the remaining 1C, unit, and UI/integration checks in the full pipeline.'
-    } else {
-        'Resolve the BSL analysis prerequisite or diagnostic failure, then rerun scripts/test-bsl.ps1.'
-    }
+    $summary.nextAction = if ($Status -eq 'passed') { 'BSL analysis passed. Configure the remaining 1C, unit, and UI/integration checks in the full pipeline.' } else { 'Resolve the BSL analysis prerequisite or diagnostic failure, then rerun scripts/test-bsl.ps1.' }
     $summary | ConvertTo-Json -Depth 10 | Set-Content -Path $summaryPath -Encoding UTF8
 
     Write-Host ("BSL static analysis status: {0}. {1}" -f $Status, $Details)
@@ -131,7 +100,7 @@ Remove-Item -Force -ErrorAction SilentlyContinue $reportPath
 Remove-Item -Force -ErrorAction SilentlyContinue $LogPath
 
 if (-not (Test-Path $SourceDir -PathType Container)) {
-    Write-CheckResult -Status 'failed' -Details ("BSL source directory not found: {0}" -f (Get-RepoRelativePath $SourceDir)) -ExitCode 1
+    Write-CheckResult -Status 'failed' -Details ('BSL source directory not found: ' + (Get-RepoRelativePath $SourceDir)) -ExitCode 1
 }
 
 $bslFiles = @(Get-ChildItem -Path $SourceDir -Filter '*.bsl' -File -Recurse)
@@ -143,8 +112,8 @@ $java = Get-Command java -ErrorAction SilentlyContinue
 if ($null -eq $java) {
     Write-CheckResult -Status 'blocked' -Details 'Java was not found on PATH. BSL Language Server requires a Java virtual machine.' -ExitCode 2
 }
-
-$javaVersionOutput = (& $java.Source -version 2>&1 | Out-String)
+$javaPath = $java.Path
+$javaVersionOutput = [string](& $javaPath -version 2>&1 | Out-String)
 $javaMatch = [regex]::Match($javaVersionOutput, 'version "(?<major>[0-9]+)')
 if (-not $javaMatch.Success) {
     Write-CheckResult -Status 'blocked' -Details 'Java was found, but its version could not be determined.' -ExitCode 2
@@ -162,11 +131,10 @@ if (-not (Test-Path $JarPath -PathType Leaf)) {
         Write-CheckResult -Status 'blocked' -Details ("Could not download BSL Language Server {0}: {1}" -f $version, $_.Exception.Message) -ExitCode 2
     }
 }
-
 try {
-    $actualSha256 = (Get-FileHash -Path $JarPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualSha256 = [string](Get-FileHash -Path $JarPath -Algorithm SHA256).Hash.ToLowerInvariant()
 } catch {
-    Write-CheckResult -Status 'blocked' -Details ("Could not read the BSL Language Server archive: {0}" -f $_.Exception.Message) -ExitCode 2
+    Write-CheckResult -Status 'blocked' -Details ('Could not read the BSL Language Server archive: ' + $_.Exception.Message) -ExitCode 2
 }
 if ($actualSha256 -ne $expectedSha256) {
     Write-CheckResult -Status 'failed' -Details ("SHA-256 mismatch for BSL Language Server {0}. Expected {1}, got {2}." -f $version, $expectedSha256, $actualSha256) -ExitCode 1
@@ -175,12 +143,11 @@ if ($actualSha256 -ne $expectedSha256) {
 $stdoutPath = Join-Path $ReportDirectory 'bsl.stdout.log'
 $stderrPath = Join-Path $ReportDirectory 'bsl.stderr.log'
 Remove-Item -Force -ErrorAction SilentlyContinue $stdoutPath, $stderrPath
-
-$commandDescription = "java -jar <bsl-language-server-{0}-exec.jar> --analyze --srcDir <source> --reporter json --outputDir <report-directory>" -f $version
 $analysisExitCode = -1
+$analysisError = $null
 try {
     Push-Location $root
-    & $java.Source -jar $JarPath --analyze --srcDir $SourceDir --reporter json --outputDir $ReportDirectory 1> $stdoutPath 2> $stderrPath
+    & $javaPath -jar $JarPath --analyze --srcDir $SourceDir --reporter json --outputDir $ReportDirectory 1> $stdoutPath 2> $stderrPath
     $analysisExitCode = $LASTEXITCODE
 } catch {
     $analysisError = $_.Exception.Message
@@ -188,24 +155,24 @@ try {
     Pop-Location
 }
 
-$stdout = if (Test-Path $stdoutPath) { Get-Content -Raw -Path $stdoutPath } else { '' }
-$stderr = if (Test-Path $stderrPath) { Get-Content -Raw -Path $stderrPath } else { '' }
-$log = @(
-    "Command: $commandDescription"
-    "Java: $($javaVersionOutput.Trim())"
-    "Process exit code: $analysisExitCode"
-    ""
+$stdout = if (Test-Path $stdoutPath -PathType Leaf) { [string](Get-Content -Raw -Path $stdoutPath) } else { '' }
+$stderr = if (Test-Path $stderrPath -PathType Leaf) { [string](Get-Content -Raw -Path $stderrPath) } else { '' }
+$logParts = @(
+    ('Command: java -jar <bsl-language-server-{0}-exec.jar> --analyze --srcDir <source> --reporter json --outputDir <report-directory>' -f $version)
+    ('Java: ' + $javaVersionOutput.Trim())
+    ('Process exit code: ' + $analysisExitCode)
+    ''
     '--- stdout ---'
     $stdout.TrimEnd()
     '--- stderr ---'
     $stderr.TrimEnd()
-    if ($analysisError) { '--- PowerShell error ---'; $analysisError }
-) -join [Environment]::NewLine
-Set-Content -Path $LogPath -Value $log -Encoding UTF8
+)
+if ($null -ne $analysisError) { $logParts += '--- PowerShell error ---'; $logParts += $analysisError }
+Set-Content -Path $LogPath -Value ($logParts -join [Environment]::NewLine) -Encoding UTF8
 Remove-Item -Force -ErrorAction SilentlyContinue $stdoutPath, $stderrPath
 
-if ($analysisError) {
-    Write-CheckResult -Status 'failed' -Details ("BSL Language Server could not be started: {0}" -f $analysisError) -ExitCode 1 -AnalysisExitCode $analysisExitCode
+if ($null -ne $analysisError) {
+    Write-CheckResult -Status 'failed' -Details ('BSL Language Server could not be started: ' + $analysisError) -ExitCode 1 -AnalysisExitCode $analysisExitCode
 }
 if ($analysisExitCode -ne 0) {
     Write-CheckResult -Status 'failed' -Details ("BSL Language Server exited with code {0}. See the full log." -f $analysisExitCode) -ExitCode 1 -AnalysisExitCode $analysisExitCode
@@ -217,14 +184,12 @@ if (-not (Test-Path $reportPath -PathType Leaf)) {
 try {
     $analysis = Get-Content -Raw -Path $reportPath | ConvertFrom-Json
 } catch {
-    Write-CheckResult -Status 'failed' -Details ("The BSL JSON report could not be parsed: {0}" -f $_.Exception.Message) -ExitCode 1 -AnalysisExitCode $analysisExitCode
+    Write-CheckResult -Status 'failed' -Details ('The BSL JSON report could not be parsed: ' + $_.Exception.Message) -ExitCode 1 -AnalysisExitCode $analysisExitCode
 }
-
 $diagnostics = @($analysis.fileinfos | ForEach-Object { @($_.diagnostics) })
 $errorDiagnostics = @($diagnostics | Where-Object { $_.severity -eq 'Error' })
 $warningDiagnostics = @($diagnostics | Where-Object { $_.severity -eq 'Warning' })
 if ($errorDiagnostics.Count -gt 0) {
     Write-CheckResult -Status 'failed' -Details ("BSL analysis found {0} error diagnostic(s) and {1} warning(s). See the JSON report and full log." -f $errorDiagnostics.Count, $warningDiagnostics.Count) -ExitCode 1 -AnalysisExitCode $analysisExitCode -ErrorCount $errorDiagnostics.Count -WarningCount $warningDiagnostics.Count
 }
-
 Write-CheckResult -Status 'passed' -Details ("BSL analysis completed with 0 error diagnostic(s) and {0} warning(s)." -f $warningDiagnostics.Count) -ExitCode 0 -AnalysisExitCode $analysisExitCode -ErrorCount 0 -WarningCount $warningDiagnostics.Count
